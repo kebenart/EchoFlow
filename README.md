@@ -9,7 +9,7 @@
 <img src="https://img.shields.io/badge/SwiftUI-Native-green.svg" alt="SwiftUI">
 <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License">
 
-[下载最新版本](https://github.com/kebenart/EchoFlow/releases/latest) · [问题反馈](https://github.com/kebenart/EchoFlow/issues)
+[官网](https://kebenart.github.io/EchoFlow/) · [下载最新版本](https://github.com/kebenart/EchoFlow/releases/latest) · [问题反馈](https://github.com/kebenart/EchoFlow/issues)
 
 </div>
 
