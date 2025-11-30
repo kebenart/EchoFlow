@@ -1,0 +1,122 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # 当推送 v 开头的 tag 时触发，如 v1.0.0
+
+# 授权 GITHUB_TOKEN 创建 Release 和上传文件
+permissions:
+  contents: write
+
+env:
+  SCHEME: EchoFlow
+  PRODUCT_NAME: EchoFlow
+
+jobs:
+  build:
+    runs-on: macos-14  # 使用 macOS 14 (Sonoma) runner
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+        
+    - name: Get version from tag
+      id: get_version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "Building version: $VERSION"
+        
+    - name: Update version in project
+      run: |
+        # 更新 Info.plist 中的版本号
+        /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.get_version.outputs.VERSION }}" "${{ env.SCHEME }}/Info.plist" 2>/dev/null || true
+        # 使用 agvtool 更新版本
+        cd "${{ env.SCHEME }}.xcodeproj/.."
+        agvtool new-marketing-version ${{ steps.get_version.outputs.VERSION }} || true
+        
+    - name: Build Archive
+      run: |
+        xcodebuild archive \
+          -project "${{ env.SCHEME }}.xcodeproj" \
+          -scheme "${{ env.SCHEME }}" \
+          -configuration Release \
+          -archivePath "$PWD/build/${{ env.PRODUCT_NAME }}.xcarchive" \
+          CODE_SIGN_IDENTITY="-" \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGNING_ALLOWED=NO \
+          ONLY_ACTIVE_ARCH=NO \
+          | xcpretty
+          
+    - name: Export App
+      run: |
+        # 直接从 archive 中复制 app
+        mkdir -p "$PWD/build/Export"
+        cp -R "$PWD/build/${{ env.PRODUCT_NAME }}.xcarchive/Products/Applications/${{ env.PRODUCT_NAME }}.app" "$PWD/build/Export/"
+        
+    - name: Create DMG
+      run: |
+        # 创建临时目录用于 DMG
+        mkdir -p "$PWD/build/dmg-contents"
+        cp -R "$PWD/build/Export/${{ env.PRODUCT_NAME }}.app" "$PWD/build/dmg-contents/"
+        
+        # 创建指向 Applications 的符号链接
+        ln -s /Applications "$PWD/build/dmg-contents/Applications"
+        
+        # 创建 DMG
+        hdiutil create -volname "${{ env.PRODUCT_NAME }}" \
+          -srcfolder "$PWD/build/dmg-contents" \
+          -ov -format UDZO \
+          "$PWD/build/${{ env.PRODUCT_NAME }}-${{ steps.get_version.outputs.VERSION }}.dmg"
+          
+    - name: Create ZIP
+      run: |
+        cd "$PWD/build/Export"
+        zip -r -y "../${{ env.PRODUCT_NAME }}-${{ steps.get_version.outputs.VERSION }}.zip" "${{ env.PRODUCT_NAME }}.app"
+        
+    - name: Generate Release Notes
+      id: release_notes
+      run: |
+        # 尝试从 CHANGELOG.md 提取当前版本的更新说明
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        if [ -f "CHANGELOG.md" ]; then
+          # 提取当前版本的更新内容
+          NOTES=$(awk "/^## \[?v?$VERSION\]?|^## v?$VERSION/{flag=1; next} /^## /{flag=0} flag" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES="Release version $VERSION"
+          fi
+        else
+          NOTES="Release version $VERSION"
+        fi
+        
+        # 写入到文件
+        echo "$NOTES" > release_notes.md
+        
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        name: "EchoFlow v${{ steps.get_version.outputs.VERSION }}"
+        body_path: release_notes.md
+        draft: false
+        prerelease: false
+        files: |
+          build/${{ env.PRODUCT_NAME }}-${{ steps.get_version.outputs.VERSION }}.dmg
+          build/${{ env.PRODUCT_NAME }}-${{ steps.get_version.outputs.VERSION }}.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: EchoFlow-${{ steps.get_version.outputs.VERSION }}
+        path: |
+          build/*.dmg
+          build/*.zip
+        retention-days: 30
+

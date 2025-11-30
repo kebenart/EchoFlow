@@ -1,0 +1,69 @@
+# Xcode
+*.xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+xcuserdata/
+DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+build/
+*.xcarchive
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# IDE
+.cursor/
+*.cursor/
+.cursorrules
+*.cursorrules
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Backup files
+*.save
+*.bak
+*.backup
+*~
+
+# Test files
+dummy.*
+test.*
+*.test.*
+
+# Build outputs
+*.app
+*.dmg
+*.zip
+*.pkg
+
+# Logs
+*.log
+logs/
