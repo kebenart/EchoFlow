@@ -41,3 +41,6 @@ enum ColorSamplingAlgorithm: String, CaseIterable {
     }
 }
 
+
+
+

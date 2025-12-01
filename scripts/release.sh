@@ -10,12 +10,14 @@
 #   ./scripts/release.sh 1.0.0 --dry-run   # 仅测试，不实际执行
 #
 # 功能:
-#   1. 更新项目版本号
-#   2. 更新 CHANGELOG.md (如果未更新)
-#   3. 提交所有更改
-#   4. 创建 Git tag
-#   5. 推送到远程仓库
-#   6. 触发 GitHub Actions 自动构建和发布
+#   1. 提交当前分支的所有更改
+#   2. 合并当前分支到 master/main
+#   3. 更新项目版本号
+#   4. 更新 CHANGELOG.md (如果未更新)
+#   5. 提交版本更新
+#   6. 创建 Git tag
+#   7. 推送到远程仓库
+#   8. 触发 GitHub Actions 自动构建和发布
 #
 # =============================================================================
 
@@ -72,8 +74,16 @@ show_help() {
     echo "  --no-push   不推送到远程仓库"
     echo "  --help      显示此帮助信息"
     echo ""
+    echo "发布流程:"
+    echo "  1. 提交当前分支的所有更改"
+    echo "  2. 合并当前分支到 master/main"
+    echo "  3. 更新版本号和 CHANGELOG"
+    echo "  4. 创建 Git tag"
+    echo "  5. 推送到远程仓库"
+    echo "  6. 触发 GitHub Actions 自动构建"
+    echo ""
     echo "示例:"
-    echo "  $0 1.0.0              # 发布版本 1.0.0"
+    echo "  $0 1.0.0              # 从当前分支发布版本 1.0.0（会自动合并到主分支）"
     echo "  $0 1.0.0 --dry-run    # 测试发布流程"
     echo ""
 }
@@ -251,7 +261,7 @@ main() {
     fi
     
     # Step 1: 检查 Git 状态
-    print_step "Step 1/6: 检查 Git 状态"
+    print_step "Step 1/8: 检查 Git 状态"
     
     cd "$PROJECT_DIR"
     
@@ -265,15 +275,17 @@ main() {
     local current_branch=$(git branch --show-current)
     print_info "当前分支: $current_branch"
     
-    if [[ "$current_branch" != "main" && "$current_branch" != "master" ]]; then
-        print_warning "当前不在 main/master 分支，请确认是否要从 $current_branch 分支发布"
-        read -p "继续? (y/n) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_info "已取消"
-            exit 0
-        fi
+    # 确定主分支名称（main 或 master）
+    local main_branch=""
+    if git show-ref --verify --quiet refs/heads/main; then
+        main_branch="main"
+    elif git show-ref --verify --quiet refs/heads/master; then
+        main_branch="master"
+    else
+        print_error "未找到 main 或 master 分支"
+        exit 1
     fi
+    print_info "主分支: $main_branch"
     
     # 检查 tag 是否已存在
     if git tag -l "v$version" | grep -q "v$version"; then
@@ -283,8 +295,73 @@ main() {
     
     print_success "Git 状态检查通过"
     
-    # Step 2: 检查 CHANGELOG
-    print_step "Step 2/6: 检查 CHANGELOG"
+    # Step 2: 提交当前分支的更改
+    print_step "Step 2/8: 提交当前分支的更改"
+    
+    if ! $dry_run; then
+        # 检查是否有未提交的更改
+        if ! check_git_status; then
+            print_info "发现未提交的更改，正在提交..."
+            git add -A
+            git commit -m "chore: prepare for release v$version" || {
+                print_error "提交失败"
+                exit 1
+            }
+            print_success "已提交当前分支的更改"
+        else
+            print_info "当前分支没有未提交的更改"
+        fi
+        
+        # 如果当前分支不是主分支，需要合并到主分支
+        if [[ "$current_branch" != "$main_branch" ]]; then
+            print_info "当前分支 ($current_branch) 不是主分支 ($main_branch)"
+            
+            # 检查是否有未推送的提交
+            local ahead_count=$(git rev-list --count "$current_branch" ^origin/"$current_branch" 2>/dev/null || echo "0")
+            if [[ "$ahead_count" -gt 0 ]]; then
+                print_warning "当前分支有 $ahead_count 个未推送的提交"
+                print_info "正在推送当前分支..."
+                git push origin "$current_branch" || {
+                    print_error "推送当前分支失败"
+                    exit 1
+                }
+                print_success "已推送当前分支"
+            fi
+            
+            # 切换到主分支
+            print_info "切换到主分支: $main_branch"
+            git checkout "$main_branch" || {
+                print_error "切换到主分支失败"
+                exit 1
+            }
+            
+            # 拉取最新更改
+            print_info "拉取主分支最新更改..."
+            git pull origin "$main_branch" || {
+                print_warning "拉取主分支失败，继续执行..."
+            }
+            
+            # 合并当前分支到主分支
+            print_info "合并 $current_branch 到 $main_branch..."
+            git merge "$current_branch" --no-edit -m "chore: merge $current_branch into $main_branch for release v$version" || {
+                print_error "合并失败，请手动解决冲突后重试"
+                exit 1
+            }
+            print_success "已合并 $current_branch 到 $main_branch"
+        else
+            print_info "当前已在主分支 ($main_branch)，跳过合并步骤"
+            # 拉取最新更改
+            print_info "拉取主分支最新更改..."
+            git pull origin "$main_branch" || {
+                print_warning "拉取主分支失败，继续执行..."
+            }
+        fi
+    else
+        print_info "[Dry Run] 将提交当前分支并合并到 $main_branch"
+    fi
+    
+    # Step 3: 检查 CHANGELOG
+    print_step "Step 3/8: 检查 CHANGELOG"
     
     if ! check_changelog "$version"; then
         print_warning "CHANGELOG.md 中没有找到版本 $version 的记录"
@@ -307,8 +384,8 @@ main() {
         print_success "CHANGELOG 已包含版本 $version 的记录"
     fi
     
-    # Step 3: 更新版本号
-    print_step "Step 3/6: 更新版本号"
+    # Step 4: 更新版本号
+    print_step "Step 4/8: 更新版本号"
     
     if ! $dry_run; then
         update_xcode_version "$version"
@@ -316,15 +393,15 @@ main() {
         print_info "[Dry Run] 将更新版本号为 $version"
     fi
     
-    # Step 4: 提交更改
-    print_step "Step 4/6: 提交更改"
+    # Step 5: 提交版本更新
+    print_step "Step 5/8: 提交版本更新"
     
     if ! $dry_run; then
         git add -A
         
         if ! check_git_status; then
             git commit -m "chore: bump version to $version"
-            print_success "已提交更改"
+            print_success "已提交版本更新"
         else
             print_info "没有需要提交的更改"
         fi
@@ -332,8 +409,8 @@ main() {
         print_info "[Dry Run] 将提交版本更新"
     fi
     
-    # Step 5: 创建 Tag
-    print_step "Step 5/6: 创建 Git Tag"
+    # Step 6: 创建 Tag
+    print_step "Step 6/8: 创建 Git Tag"
     
     if ! $dry_run; then
         git tag -a "v$version" -m "Release v$version"
@@ -342,25 +419,44 @@ main() {
         print_info "[Dry Run] 将创建 tag: v$version"
     fi
     
-    # Step 6: 推送到远程
-    print_step "Step 6/6: 推送到远程仓库"
+    # Step 7: 推送到远程
+    print_step "Step 7/8: 推送到远程仓库"
     
     if ! $dry_run && ! $no_push; then
-        print_info "推送提交..."
-        git push origin "$current_branch"
+        # 确保在主分支
+        local current_branch_after_merge=$(git branch --show-current)
+        if [[ "$current_branch_after_merge" != "$main_branch" ]]; then
+            print_warning "当前不在主分支，切换到 $main_branch"
+            git checkout "$main_branch" || {
+                print_error "切换到主分支失败"
+                exit 1
+            }
+        fi
         
-        print_info "推送 tag..."
-        git push origin "v$version"
+        print_info "推送主分支 ($main_branch) 到远程..."
+        git push origin "$main_branch" || {
+            print_error "推送主分支失败"
+            exit 1
+        }
+        
+        print_info "推送 tag v$version 到远程..."
+        git push origin "v$version" || {
+            print_error "推送 tag 失败"
+            exit 1
+        }
         
         print_success "已推送到远程仓库"
     else
         if $dry_run; then
-            print_info "[Dry Run] 将推送到远程仓库"
+            print_info "[Dry Run] 将推送主分支和 tag 到远程仓库"
         fi
         if $no_push; then
             print_warning "已跳过推送 (--no-push)"
         fi
     fi
+    
+    # Step 8: 完成提示
+    print_step "Step 8/8: 发布完成"
     
     # 完成
     echo ""
@@ -382,3 +478,6 @@ main() {
 
 # 运行主函数
 main "$@"
+
+
+

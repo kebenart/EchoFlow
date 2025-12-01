@@ -16,6 +16,7 @@ enum SettingsTab: String, CaseIterable {
     case rules = "规则"
     case shortcuts = "快捷键"
     case subscription = "订阅"
+    case dataManagement = "数据管理"
     case about = "关于"
     
     var icon: String {
@@ -24,6 +25,7 @@ enum SettingsTab: String, CaseIterable {
         case .rules: return "list.bullet.rectangle"
         case .shortcuts: return "keyboard"
         case .subscription: return "star.fill"
+        case .dataManagement: return "externaldrive"
         case .about: return "info.circle"
         }
     }
@@ -123,6 +125,8 @@ struct SettingsView: View {
             )
         case .subscription:
             SubscriptionSettingsView()
+        case .dataManagement:
+            DataManagementSettingsView()
         case .about:
             AboutSettingsView(checkForUpdatesOnLaunch: $checkForUpdatesOnLaunch)
         }
@@ -139,6 +143,8 @@ private struct GeneralSettingsView: View {
     @Binding var launchAtLogin: Bool
     @Binding var showStatusBarIcon: Bool
     @Binding var enableCoolMode: Bool
+    
+    @State private var accessibilityPermissionGranted: Bool = false
     
     var dockPosition: DockPosition {
         get { DockPosition(rawValue: dockPositionRaw) ?? .bottom }
@@ -276,15 +282,50 @@ private struct GeneralSettingsView: View {
                 .help("在菜单栏显示 EchoFlow 图标")
             }
             
-            Section("数据管理") {
-                ClearDataButtons()
+            Section("权限设置") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("辅助功能权限")
+                            if accessibilityPermissionGranted {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                            } else {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                        Text(accessibilityPermissionGranted ? "已授权" : "未授权")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("用于自动粘贴功能（复制并粘贴到当前应用）")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    HStack(spacing: 8) {
+                        Button(accessibilityPermissionGranted ? "重新检查" : "检查权限") {
+                            checkAccessibilityPermission()
+                        }
+                        Button {
+                            showPermissionHelp()
+                        } label: {
+                            Image(systemName: "questionmark.circle")
+                        }
+                        .help("查看权限帮助")
+                    }
+                }
+                .help("检查辅助功能权限状态，用于自动粘贴功能")
             }
+            
         }
         .formStyle(.grouped)
         .padding()
         .onAppear {
             // 同步登录时自动启动状态
             launchAtLogin = LaunchAtLoginManager.shared.isEnabled
+            // 检查辅助功能权限状态
+            checkAccessibilityPermission()
         }
     }
     
@@ -294,6 +335,96 @@ private struct GeneralSettingsView: View {
         case .top: return "顶部"
         case .left: return "左侧"
         case .right: return "右侧"
+        }
+    }
+    
+    /// 检查辅助功能权限
+    private func checkAccessibilityPermission() {
+        let hasPermission = PasteSimulator.shared.checkAccessibilityPermission()
+        accessibilityPermissionGranted = hasPermission
+        
+        if !hasPermission {
+            let alert = NSAlert()
+            alert.messageText = "需要辅助功能权限"
+            alert.informativeText = "EchoFlow 需要辅助功能权限来实现自动粘贴功能。\n\n请在系统设置中授予权限。"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "打开系统设置")
+            alert.addButton(withTitle: "查看帮助")
+            alert.addButton(withTitle: "取消")
+            
+            let response = alert.runModal()
+            
+            switch response {
+            case .alertFirstButtonReturn:
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                    NSWorkspace.shared.open(url)
+                }
+            case .alertSecondButtonReturn:
+                showPermissionHelp()
+            default:
+                break
+            }
+        }
+    }
+    
+    /// 显示权限帮助
+    private func showPermissionHelp() {
+        let helpText = """
+        EchoFlow 权限帮助
+        
+        为什么需要权限？
+        EchoFlow 使用 macOS 的 Accessibility API 来模拟键盘操作（⌘V），实现自动粘贴功能。这是 macOS 的安全机制，需要用户明确授权。
+        
+        如何授权？
+        1. 点击"打开系统设置"按钮
+        2. 在辅助功能列表中找到 EchoFlow
+        3. 勾选授权
+        4. 重新启动应用
+        
+        常见问题：
+        • 授权后仍然提示需要权限？
+          → 完全退出应用（⌘Q）后重新启动
+        
+        • 系统设置中找不到应用？
+          → 点击列表下方的 ➕ 按钮手动添加
+        
+        • Debug 和 Release 版本权限混乱？
+          → 两个版本使用不同的 Bundle ID，需要分别授权
+        
+        更多帮助：
+        查看项目根目录的 PERMISSION_HELP.md 文件获取详细帮助。
+        """
+        
+        let alert = NSAlert()
+        alert.messageText = "权限帮助"
+        alert.informativeText = helpText
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "打开帮助文档")
+        alert.addButton(withTitle: "关闭")
+        
+        let response = alert.runModal()
+        
+        switch response {
+        case .alertFirstButtonReturn:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
+        case .alertSecondButtonReturn:
+            // 尝试打开帮助文档
+            if let projectDir = Bundle.main.bundlePath.components(separatedBy: "/Contents").first {
+                let helpPath = (projectDir as NSString).deletingLastPathComponent + "/PERMISSION_HELP.md"
+                let helpURL = URL(fileURLWithPath: helpPath)
+                if FileManager.default.fileExists(atPath: helpPath) {
+                    NSWorkspace.shared.open(helpURL)
+                } else {
+                    // 如果找不到文件，尝试在 Finder 中显示项目目录
+                    let projectURL = URL(fileURLWithPath: (projectDir as NSString).deletingLastPathComponent)
+                    NSWorkspace.shared.open(projectURL)
+                }
+            }
+        default:
+            break
         }
     }
 }
@@ -1076,14 +1207,30 @@ private struct ClearDataButtons: View {
     }
     
     private func clearClipboardHistory() {
+        let deleteLockedItems = UserDefaults.standard.bool(forKey: "deleteLockedItems")
         let descriptor = FetchDescriptor<ClipboardItem>()
         do {
             let items = try modelContext.fetch(descriptor)
+            var deletedCount = 0
+            var skippedCount = 0
+            
             for item in items {
+                // 如果设置了不删除锁定卡片，且当前卡片已锁定，则跳过
+                if !deleteLockedItems && item.isLocked {
+                    skippedCount += 1
+                    continue
+                }
                 modelContext.delete(item)
+                deletedCount += 1
             }
+            
             try modelContext.save()
-            print("✅ 已清空所有剪贴板历史记录")
+            
+            if skippedCount > 0 {
+                print("✅ 已清空 \(deletedCount) 条剪贴板历史记录，跳过 \(skippedCount) 条锁定的卡片")
+            } else {
+                print("✅ 已清空所有剪贴板历史记录")
+            }
             
             // 发送通知刷新界面
             NotificationCenter.default.post(
@@ -1096,14 +1243,30 @@ private struct ClearDataButtons: View {
     }
     
     private func clearNotes() {
+        let deleteLockedItems = UserDefaults.standard.bool(forKey: "deleteLockedItems")
         let descriptor = FetchDescriptor<NoteItem>()
         do {
             let items = try modelContext.fetch(descriptor)
+            var deletedCount = 0
+            var skippedCount = 0
+            
             for item in items {
+                // 如果设置了不删除锁定笔记，且当前笔记已锁定，则跳过
+                if !deleteLockedItems && item.isLocked {
+                    skippedCount += 1
+                    continue
+                }
                 modelContext.delete(item)
+                deletedCount += 1
             }
+            
             try modelContext.save()
-            print("✅ 已清空所有笔记")
+            
+            if skippedCount > 0 {
+                print("✅ 已清空 \(deletedCount) 条笔记，跳过 \(skippedCount) 条锁定的笔记")
+            } else {
+                print("✅ 已清空所有笔记")
+            }
             
             // 发送通知刷新界面
             NotificationCenter.default.post(
@@ -1219,6 +1382,324 @@ private struct DockPositionButton: View {
         case .top: return "顶部"
         case .left: return "左侧"
         case .right: return "右侧"
+        }
+    }
+}
+
+// MARK: - Data Management Settings
+
+private struct DataManagementSettingsView: View {
+    @Environment(\.modelContext) private var modelContext
+    
+    var body: some View {
+        Form {
+            Section("备份与恢复") {
+                BackupRestoreView()
+            }
+            
+            Section("回收站设置") {
+                Toggle("启用回收站", isOn: Binding(
+                    get: { 
+                        // 默认值为 true（开启）
+                        if UserDefaults.standard.object(forKey: "enableTrash") == nil {
+                            return true
+                        }
+                        return UserDefaults.standard.bool(forKey: "enableTrash")
+                    },
+                    set: { UserDefaults.standard.set($0, forKey: "enableTrash") }
+                ))
+                .help("启用后，删除的项目会进入回收站，3天后自动删除。关闭后，删除会直接永久删除。")
+            }
+            
+            Section("删除设置") {
+                Toggle("删除锁定卡片", isOn: Binding(
+                    get: { UserDefaults.standard.bool(forKey: "deleteLockedItems") },
+                    set: { UserDefaults.standard.set($0, forKey: "deleteLockedItems") }
+                ))
+                .help("启用后，清空列表和自动删除时会删除锁定的卡片")
+            }
+            
+            Section("清空数据") {
+                ClearDataButtons()
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+// MARK: - Backup/Restore View
+
+private struct BackupRestoreView: View {
+    @State private var backupOptions: BackupOptions = .all
+    @State private var restoreOptions: BackupOptions = .all
+    @State private var isBackingUp = false
+    @State private var isRestoring = false
+    @State private var backupMessage: String = ""
+    @State private var restoreMessage: String = ""
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("备份与恢复")
+                .font(.headline)
+            
+            // 备份选项
+            VStack(alignment: .leading, spacing: 8) {
+                Text("备份内容")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("剪贴板", isOn: Binding(
+                        get: { backupOptions.contains(.clipboard) },
+                        set: { if $0 { backupOptions.insert(.clipboard) } else { backupOptions.remove(.clipboard) } }
+                    ))
+                    Toggle("笔记", isOn: Binding(
+                        get: { backupOptions.contains(.notes) },
+                        set: { if $0 { backupOptions.insert(.notes) } else { backupOptions.remove(.notes) } }
+                    ))
+                    Toggle("回收站", isOn: Binding(
+                        get: { backupOptions.contains(.trash) },
+                        set: { if $0 { backupOptions.insert(.trash) } else { backupOptions.remove(.trash) } }
+                    ))
+                    Toggle("设置", isOn: Binding(
+                        get: { backupOptions.contains(.settings) },
+                        set: { if $0 { backupOptions.insert(.settings) } else { backupOptions.remove(.settings) } }
+                    ))
+                }
+                .padding(.leading, 8)
+                
+                Button("创建备份") {
+                    createBackup()
+                }
+                .disabled(isBackingUp || backupOptions.isEmpty)
+                
+                if !backupMessage.isEmpty {
+                    Text(backupMessage)
+                        .font(.caption)
+                        .foregroundColor(backupMessage.contains("成功") ? .green : .red)
+                }
+            }
+            
+            Divider()
+            
+            // 恢复选项
+            VStack(alignment: .leading, spacing: 8) {
+                Text("恢复内容")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("剪贴板", isOn: Binding(
+                        get: { restoreOptions.contains(.clipboard) },
+                        set: { if $0 { restoreOptions.insert(.clipboard) } else { restoreOptions.remove(.clipboard) } }
+                    ))
+                    Toggle("笔记", isOn: Binding(
+                        get: { restoreOptions.contains(.notes) },
+                        set: { if $0 { restoreOptions.insert(.notes) } else { restoreOptions.remove(.notes) } }
+                    ))
+                    Toggle("回收站", isOn: Binding(
+                        get: { restoreOptions.contains(.trash) },
+                        set: { if $0 { restoreOptions.insert(.trash) } else { restoreOptions.remove(.trash) } }
+                    ))
+                    Toggle("设置", isOn: Binding(
+                        get: { restoreOptions.contains(.settings) },
+                        set: { if $0 { restoreOptions.insert(.settings) } else { restoreOptions.remove(.settings) } }
+                    ))
+                }
+                .padding(.leading, 8)
+                
+                Button("恢复备份") {
+                    restoreBackup()
+                }
+                .disabled(isRestoring || restoreOptions.isEmpty)
+                
+                if !restoreMessage.isEmpty {
+                    Text(restoreMessage)
+                        .font(.caption)
+                        .foregroundColor(restoreMessage.contains("成功") ? .green : .red)
+                }
+            }
+        }
+    }
+    
+    private func createBackup() {
+        isBackingUp = true
+        backupMessage = ""
+        
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "EchoFlow_Backup_\(ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")).json"
+        panel.title = "保存备份"
+        
+        // 确保弹框显示在设置窗口前面
+        if let settingsWindow = WindowManager.shared.settingsWindow {
+            panel.beginSheetModal(for: settingsWindow) { response in
+                if response == .OK, let url = panel.url {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        do {
+                            try BackupManager.shared.createBackup(options: backupOptions, to: url)
+                            DispatchQueue.main.async {
+                                backupMessage = "✅ 备份成功: \(url.lastPathComponent)"
+                                isBackingUp = false
+                            }
+                        } catch {
+                            DispatchQueue.main.async {
+                                backupMessage = "❌ 备份失败: \(error.localizedDescription)"
+                                isBackingUp = false
+                            }
+                        }
+                    }
+                } else {
+                    isBackingUp = false
+                }
+            }
+        } else {
+            // 如果没有设置窗口，使用普通方式
+            panel.begin { response in
+                if response == .OK, let url = panel.url {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        do {
+                            try BackupManager.shared.createBackup(options: backupOptions, to: url)
+                            DispatchQueue.main.async {
+                                backupMessage = "✅ 备份成功: \(url.lastPathComponent)"
+                                isBackingUp = false
+                            }
+                        } catch {
+                            DispatchQueue.main.async {
+                                backupMessage = "❌ 备份失败: \(error.localizedDescription)"
+                                isBackingUp = false
+                            }
+                        }
+                    }
+                } else {
+                    isBackingUp = false
+                }
+            }
+        }
+    }
+    
+    private func restoreBackup() {
+        isRestoring = true
+        restoreMessage = ""
+        
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.title = "选择备份文件"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        
+        // 确保弹框显示在设置窗口前面
+        if let settingsWindow = WindowManager.shared.settingsWindow {
+            panel.beginSheetModal(for: settingsWindow) { response in
+                if response == .OK, let url = panel.url {
+                    // 验证备份文件
+                    do {
+                        let backupData = try BackupManager.shared.validateBackup(at: url)
+                        
+                        let alert = NSAlert()
+                        alert.messageText = "确认恢复"
+                        alert.informativeText = """
+                        确定要从备份恢复吗？
+                        
+                        备份版本: \(backupData.version)
+                        创建时间: \(backupData.createdAt.formatted())
+                        
+                        这将合并备份中的数据到当前数据中（不会覆盖已存在的项目）。
+                        """
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "恢复")
+                        alert.addButton(withTitle: "取消")
+                        
+                        // 确保 alert 也显示在设置窗口前面
+                        alert.beginSheetModal(for: settingsWindow) { alertResponse in
+                            if alertResponse == .alertFirstButtonReturn {
+                                DispatchQueue.global(qos: .userInitiated).async {
+                                    do {
+                                        try BackupManager.shared.restoreBackup(from: url, options: restoreOptions)
+                                        DispatchQueue.main.async {
+                                            restoreMessage = "✅ 恢复成功"
+                                            isRestoring = false
+                                        }
+                                    } catch {
+                                        DispatchQueue.main.async {
+                                            restoreMessage = "❌ 恢复失败: \(error.localizedDescription)"
+                                            isRestoring = false
+                                        }
+                                    }
+                                }
+                            } else {
+                                isRestoring = false
+                            }
+                        }
+                    } catch {
+                        let alert = NSAlert()
+                        alert.messageText = "备份文件无效"
+                        alert.informativeText = "无法读取备份文件: \(error.localizedDescription)"
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "确定")
+                        alert.beginSheetModal(for: settingsWindow) { _ in
+                            isRestoring = false
+                        }
+                    }
+                } else {
+                    isRestoring = false
+                }
+            }
+        } else {
+            // 如果没有设置窗口，使用普通方式
+            panel.begin { response in
+                if response == .OK, let url = panel.url {
+                    // 验证备份文件
+                    do {
+                        let backupData = try BackupManager.shared.validateBackup(at: url)
+                        
+                        let alert = NSAlert()
+                        alert.messageText = "确认恢复"
+                        alert.informativeText = """
+                        确定要从备份恢复吗？
+                        
+                        备份版本: \(backupData.version)
+                        创建时间: \(backupData.createdAt.formatted())
+                        
+                        这将合并备份中的数据到当前数据中（不会覆盖已存在的项目）。
+                        """
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "恢复")
+                        alert.addButton(withTitle: "取消")
+                        
+                        if alert.runModal() == .alertFirstButtonReturn {
+                            DispatchQueue.global(qos: .userInitiated).async {
+                                do {
+                                    try BackupManager.shared.restoreBackup(from: url, options: restoreOptions)
+                                    DispatchQueue.main.async {
+                                        restoreMessage = "✅ 恢复成功"
+                                        isRestoring = false
+                                    }
+                                } catch {
+                                    DispatchQueue.main.async {
+                                        restoreMessage = "❌ 恢复失败: \(error.localizedDescription)"
+                                        isRestoring = false
+                                    }
+                                }
+                            }
+                        } else {
+                            isRestoring = false
+                        }
+                    } catch {
+                        let alert = NSAlert()
+                        alert.messageText = "备份文件无效"
+                        alert.informativeText = "无法读取备份文件: \(error.localizedDescription)"
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "确定")
+                        alert.runModal()
+                        isRestoring = false
+                    }
+                } else {
+                    isRestoring = false
+                }
+            }
         }
     }
 }

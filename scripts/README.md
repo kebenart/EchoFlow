@@ -6,9 +6,183 @@
 
 | 脚本 | 用途 | 使用频率 |
 |------|------|---------|
+| `build-package.sh` | 本地构建安装包 | 本地测试/分发 |
+| `check-signature.sh` | 检测安装包签名 | 验证构建结果 |
+| `fix-permissions.sh` | 权限修复工具 | 权限问题 |
+| `check-tcc-permissions.sh` | 检查 TCC 数据库权限 | 诊断权限问题 |
 | `release.sh` | 完整发布流程 | 正式发布 |
 | `quick-release.sh` | 快速发布 | 热修复/小版本 |
 | `clean-git-history.sh` | 清理 Git 历史 | 初始化/重置 |
+
+---
+
+## 📦 build-package.sh - 本地构建安装包
+
+在本地构建 DMG 和 ZIP 安装包，无需推送到 GitHub。
+
+### 用法
+
+```bash
+./scripts/build-package.sh [version]
+```
+
+### 示例
+
+```bash
+# 使用当前项目版本号构建
+./scripts/build-package.sh
+
+# 指定版本号构建
+./scripts/build-package.sh 1.0.1
+```
+
+### 执行步骤
+
+1. ✅ 清理旧的构建文件
+2. ✅ 构建 Release Archive
+3. ✅ 导出 .app 文件
+4. ✅ 创建 DMG 安装包
+5. ✅ 创建 ZIP 压缩包
+
+### 输出文件
+
+构建完成后，会在 `build/` 目录下生成：
+
+- `EchoFlow-x.x.x.dmg` - DMG 安装包（可直接双击安装）
+- `EchoFlow-x.x.x.zip` - ZIP 压缩包（备用分发方式）
+
+### 安装说明
+
+1. 双击 DMG 文件打开
+2. 将 EchoFlow.app 拖入 Applications 文件夹
+3. 首次运行时，右键选择"打开"以绕过 Gatekeeper
+
+---
+
+## 🔐 check-signature.sh - 检测安装包签名
+
+检测 .app 文件或 DMG 安装包的代码签名信息，用于验证构建结果。
+
+### 用法
+
+```bash
+./scripts/check-signature.sh <app_path_or_dmg>
+```
+
+### 示例
+
+```bash
+# 检测已安装的应用
+./scripts/check-signature.sh /Applications/EchoFlow.app
+
+# 检测构建输出的应用
+./scripts/check-signature.sh build/Export/EchoFlow.app
+
+# 检测 DMG 安装包（会自动挂载并检测内部应用）
+./scripts/check-signature.sh EchoFlow-1.0.0.dmg
+```
+
+### 功能
+
+1. ✅ 基本签名信息（格式、标识符、签名者）
+2. ✅ 详细签名信息（证书、时间戳、哈希值）
+3. ✅ 签名验证（深度验证、严格模式）
+4. ✅ 签名要求（Designated Requirement）
+5. ✅ 权限声明（Entitlements）
+6. ✅ 隔离属性检查（Quarantine）
+7. ✅ 可执行文件签名检查
+
+### 检测内容
+
+#### 对于 .app 文件：
+- 应用签名信息
+- 签名验证结果
+- 签名要求和权限声明
+- 隔离属性状态
+- 可执行文件签名
+
+#### 对于 .dmg 文件：
+- DMG 签名信息（如果有）
+- 自动挂载 DMG
+- 检测内部 .app 文件的签名
+- 自动卸载 DMG
+
+### 示例输出
+
+```
+📋 检查应用签名: /Applications/EchoFlow.app
+
+ℹ️ 基本签名信息:
+  Format=app bundle with Mach-O thin (x86_64)
+  Identifier=xyz.keben.EchoFlow
+  Signature=adhoc
+  CodeDirectory v=20400 size=...
+
+ℹ️ 详细签名信息:
+  Format: app bundle with Mach-O thin (x86_64)
+  Identifier: xyz.keben.EchoFlow
+  Signature: adhoc
+  ...
+
+✅ 签名验证通过
+
+ℹ️ 签名要求 (Designated Requirement):
+  identifier "xyz.keben.EchoFlow" and ...
+
+ℹ️ 权限声明 (Entitlements):
+  com.apple.security.app-sandbox
+  com.apple.developer.icloud-container-identifiers
+  ...
+
+✅ 无隔离属性
+```
+
+### 使用场景
+
+- 验证构建后的应用是否正确签名
+- 检查签名者信息
+- 诊断签名相关问题
+- 验证 DMG 安装包中的应用签名
+- 检查隔离属性（可能导致"文件已损坏"提示）
+
+---
+
+## 🔍 check-tcc-permissions.sh - 检查 TCC 数据库权限
+
+检查 TCC 数据库中的辅助功能权限，用于诊断权限问题。
+
+### 用法
+
+```bash
+sudo ./scripts/check-tcc-permissions.sh
+```
+
+### 功能
+
+1. ✅ 查询 TCC 数据库中所有辅助功能权限
+2. ✅ 显示 EchoFlow 相关的权限记录
+3. ✅ 对比应用的实际 Bundle ID 和路径
+4. ✅ 提供修复建议
+
+### 使用场景
+
+- TCC 数据库显示有权限，但 API 返回 false
+- 需要确认系统授权的是哪个 Bundle ID/路径
+- 诊断权限不匹配问题
+
+### 示例输出
+
+```
+🔍 查询 TCC 数据库中的辅助功能权限
+
+所有辅助功能权限记录:
+xyz.keben.EchoFlow|2|1732950000|已授权
+xyz.keben.EchoFlow|2|1732864000|已授权  ← 旧 Bundle ID
+
+🔍 查找 EchoFlow 相关记录
+xyz.keben.EchoFlow|2|2025-11-30 10:30:00|✅ 已授权
+xyz.keben.EchoFlow|2|2025-11-29 15:20:00|✅ 已授权
+```
 
 ---
 
@@ -208,6 +382,12 @@ agvtool what-marketing-version
 # 查看构建号
 agvtool what-version
 
+# 检测应用签名
+./scripts/check-signature.sh /Applications/EchoFlow.app
+
+# 检测 DMG 签名
+./scripts/check-signature.sh EchoFlow-1.0.0.dmg
+
 # 手动创建 tag
 git tag -a v1.0.1 -m "Release v1.0.1"
 git push origin v1.0.1
@@ -224,3 +404,5 @@ git push origin --delete v1.0.1
 - [README.md](../README.md) - 项目说明
 - [CHANGELOG.md](../CHANGELOG.md) - 更新日志
 - [QUICKSTART.md](../QUICKSTART.md) - 快速开始指南
+
+

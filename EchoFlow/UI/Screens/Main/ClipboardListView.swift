@@ -148,6 +148,16 @@ fileprivate struct ClipboardListContent: View {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             resetFocus()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ClipboardItemLockChanged"))) { notification in
+            // 处理锁定状态变化，保存到数据库
+            if let item = notification.userInfo?["item"] as? ClipboardItem {
+                do {
+                    try modelContext.save()
+                } catch {
+                    print("❌ 保存锁定状态失败: \(error)")
+                }
+            }
+        }
         .onChange(of: forceRefreshTrigger) { oldValue, newValue in
             // 当强制刷新触发时，重置焦点并确保视图更新
             // 重置焦点到第一个项目
@@ -259,7 +269,8 @@ fileprivate struct ClipboardListContent: View {
             WindowManager.shared.hidePanel {
                 // 面板隐藏后再更新时间戳
                 PasteboardManager.shared.updateItemTimestamp(item)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                // 延迟执行粘贴，确保窗口完全隐藏且动画完成
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     PasteSimulator.shared.simulatePaste(delay: 0.05)
                 }
             }
@@ -276,13 +287,26 @@ fileprivate struct ClipboardListContent: View {
         }
     }
 
-    /// 删除逻辑
+    /// 删除逻辑（根据设置决定是移动到回收站还是直接删除）
     private func deleteItem(_ item: ClipboardItem) {
         let deletedIndex = items.firstIndex(where: { $0.id == item.id }) ?? focusedIndex
         
-        // 数据库删除
-        modelContext.delete(item)
-        try? modelContext.save()
+        // 检查是否启用回收站
+        if TrashManager.isEnabled {
+            // 移动到回收站
+            do {
+                try TrashManager.shared.moveToTrash(item)
+            } catch {
+                print("❌ 移动到回收站失败: \(error)")
+                // 如果失败，直接删除
+                modelContext.delete(item)
+                try? modelContext.save()
+            }
+        } else {
+            // 直接删除
+            modelContext.delete(item)
+            try? modelContext.save()
+        }
         
         // 修正焦点
         let newCount = items.count
@@ -317,8 +341,8 @@ struct ClipboardHorizontalCollectionView: NSViewRepresentable {
         
         // 配置 ScrollView（水平滚动）
         scrollView.hasVerticalScroller = false
-        scrollView.hasHorizontalScroller = true
-        scrollView.autohidesScrollers = true
+        scrollView.hasHorizontalScroller = false // 隐藏水平滚动条
+        scrollView.autohidesScrollers = false
         scrollView.borderType = .noBorder
         scrollView.backgroundColor = .clear
         scrollView.drawsBackground = false
@@ -772,9 +796,9 @@ struct ClipboardTableView: NSViewRepresentable {
         let tableView = NSTableView()
         
         // 配置 ScrollView（垂直布局：垂直滚动）
-        scrollView.hasVerticalScroller = true
+        scrollView.hasVerticalScroller = false // 隐藏垂直滚动条
         scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
+        scrollView.autohidesScrollers = false
         scrollView.borderType = .noBorder
         scrollView.backgroundColor = .clear
         scrollView.drawsBackground = false
@@ -1225,6 +1249,7 @@ class ClipboardCardView: NSView {
     private var headerView: NSView?
     private var contentView: NSView?
     private var shortcutBadge: NSView?
+    private var lockedBadge: NSView?
     private var borderView: BorderOverlayView?
     
     // MARK: - 炫酷模式相关属性
@@ -1370,6 +1395,27 @@ class ClipboardCardView: NSView {
                 badge.removeConstraints(badge.constraints)
             }
             shortcutBadge = nil
+        }
+        
+        // 更新锁定徽章
+        if item.isLocked {
+            if lockedBadge == nil {
+                let badge = createLockedBadge()
+                badge.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(badge)
+                NSLayoutConstraint.activate([
+                    badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+                    badge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
+                ])
+                lockedBadge = badge
+            }
+        } else {
+            if let badge = lockedBadge {
+                badge.removeFromSuperview()
+                NSLayoutConstraint.deactivate(badge.constraints)
+                badge.removeConstraints(badge.constraints)
+            }
+            lockedBadge = nil
         }
     }
     
@@ -1668,6 +1714,18 @@ class ClipboardCardView: NSView {
                 badge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
             ])
             shortcutBadge = badge
+        }
+        
+        // 创建锁定徽章（如果已锁定）
+        if item.isLocked {
+            let badge = createLockedBadge()
+            badge.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(badge)
+            NSLayoutConstraint.activate([
+                badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+                badge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
+            ])
+            lockedBadge = badge
         }
     }
     
@@ -2169,6 +2227,40 @@ class ClipboardCardView: NSView {
         return container
     }
     
+    private func createLockedBadge() -> NSView {
+        let badge = NSView()
+        badge.wantsLayer = true
+        badge.layer?.backgroundColor = NSColor.orange.withAlphaComponent(0.8).cgColor
+        badge.layer?.cornerRadius = 4
+        
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "已锁定")
+        icon.contentTintColor = .white
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        badge.addSubview(icon)
+        
+        let label = NSTextField(labelWithString: "已锁定")
+        label.font = .systemFont(ofSize: 9, weight: .medium)
+        label.textColor = .white
+        label.translatesAutoresizingMaskIntoConstraints = false
+        badge.addSubview(label)
+        
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: badge.leadingAnchor, constant: 6),
+            icon.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 10),
+            icon.heightAnchor.constraint(equalToConstant: 10),
+            
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 4),
+            label.trailingAnchor.constraint(equalTo: badge.trailingAnchor, constant: -6),
+            label.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
+            
+            badge.heightAnchor.constraint(equalToConstant: 20)
+        ])
+        
+        return badge
+    }
+    
     private func createShortcutBadge() -> NSView {
         let badge = NSView()
         badge.wantsLayer = true
@@ -2205,6 +2297,12 @@ class ClipboardCardView: NSView {
     }
     
     @objc private func handleDelete() {
+        // 检查是否锁定（锁定状态下菜单项已禁用，这里作为双重保护）
+        if item.isLocked {
+            return
+        }
+        
+        // 执行删除（会移动到回收站）
         onDelete()
     }
     
@@ -2250,9 +2348,50 @@ class ClipboardCardView: NSView {
         NSWorkspace.shared.selectFile(filePath, inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
     }
     
+    @objc private func handleToggleLock() {
+        item.isLocked.toggle()
+        
+        // 更新锁定徽章
+        if item.isLocked {
+            if lockedBadge == nil {
+                let badge = createLockedBadge()
+                badge.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(badge)
+                NSLayoutConstraint.activate([
+                    badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+                    badge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
+                ])
+                lockedBadge = badge
+            }
+        } else {
+            if let badge = lockedBadge {
+                badge.removeFromSuperview()
+                NSLayoutConstraint.deactivate(badge.constraints)
+                badge.removeConstraints(badge.constraints)
+            }
+            lockedBadge = nil
+        }
+        
+        // 更新菜单
+        self.menu = createContextMenu()
+        
+        // 保存到数据库（通过通知让外部保存）
+        NotificationCenter.default.post(
+            name: NSNotification.Name("ClipboardItemLockChanged"),
+            object: nil,
+            userInfo: ["item": item]
+        )
+    }
+    
     /// 创建右键菜单
     private func createContextMenu() -> NSMenu {
         let menu = NSMenu()
+        
+        // 锁定/解锁选项
+        let lockItem = NSMenuItem(title: item.isLocked ? "解锁" : "锁定", action: #selector(handleToggleLock), keyEquivalent: "")
+        lockItem.target = self
+        menu.addItem(lockItem)
+        menu.addItem(NSMenuItem.separator())
         
         // 根据类型添加不同的菜单项
         switch item.type {
@@ -2264,6 +2403,14 @@ class ClipboardCardView: NSView {
             menu.addItem(NSMenuItem.separator())
             let deleteItem = NSMenuItem(title: "删除", action: #selector(handleDelete), keyEquivalent: "")
             deleteItem.target = self
+            deleteItem.isEnabled = !item.isLocked // 锁定状态下禁用删除
+            if item.isLocked {
+                // 确保禁用状态正确显示（灰色）
+                deleteItem.attributedTitle = NSAttributedString(
+                    string: "删除",
+                    attributes: [.foregroundColor: NSColor.disabledControlTextColor]
+                )
+            }
             menu.addItem(deleteItem)
             
         case .file, .image:
@@ -2283,12 +2430,28 @@ class ClipboardCardView: NSView {
             menu.addItem(NSMenuItem.separator())
             let deleteItem = NSMenuItem(title: "删除", action: #selector(handleDelete), keyEquivalent: "")
             deleteItem.target = self
+            deleteItem.isEnabled = !item.isLocked // 锁定状态下禁用删除
+            if item.isLocked {
+                // 确保禁用状态正确显示（灰色）
+                deleteItem.attributedTitle = NSAttributedString(
+                    string: "删除",
+                    attributes: [.foregroundColor: NSColor.disabledControlTextColor]
+                )
+            }
             menu.addItem(deleteItem)
             
         default:
             // 其他类型：只有删除
             let deleteItem = NSMenuItem(title: "删除", action: #selector(handleDelete), keyEquivalent: "")
             deleteItem.target = self
+            deleteItem.isEnabled = !item.isLocked // 锁定状态下禁用删除
+            if item.isLocked {
+                // 确保禁用状态正确显示（灰色）
+                deleteItem.attributedTitle = NSAttributedString(
+                    string: "删除",
+                    attributes: [.foregroundColor: NSColor.disabledControlTextColor]
+                )
+            }
             menu.addItem(deleteItem)
         }
         

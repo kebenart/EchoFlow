@@ -26,6 +26,7 @@ struct ClipboardCard: View, Equatable {
     }
 
     @State private var isDragging: Bool = false
+    @Environment(\.modelContext) private var modelContext
     
     var body: some View {
         Button(action: onTap) {
@@ -54,11 +55,18 @@ struct ClipboardCard: View, Equatable {
             .opacity(isDragging ? 0.5 : 1.0)
             .scaleEffect(isDragging ? 0.95 : 1.0)
             .contextMenu {
-                CardContextMenu(item: item, onDelete: onDelete)
+                CardContextMenu(item: item, onDelete: onDelete, onToggleLock: {
+                    toggleLock()
+                })
             }
             .overlay(alignment: .bottomTrailing) {
                 if index < 9 {
                     ShortcutBadge(index: index)
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                if item.isLocked {
+                    LockedBadge()
                 }
             }
         }
@@ -75,6 +83,15 @@ struct ClipboardCard: View, Equatable {
             .strokeBorder(isFocused ? Color.blue : Color.white.opacity(0.2), lineWidth: isFocused ? 3 : 1)
             // 优化点：关闭动画，响应更跟手
             .animation(nil, value: isFocused)
+    }
+    
+    private func toggleLock() {
+        item.isLocked.toggle()
+        do {
+            try modelContext.save()
+        } catch {
+            print("❌ 切换锁定状态失败: \(error)")
+        }
     }
 }
 
@@ -795,9 +812,17 @@ struct InstantButtonStyle: PrimitiveButtonStyle {
 struct CardContextMenu: View {
     let item: ClipboardItem
     let onDelete: () -> Void
+    let onToggleLock: () -> Void
     
     var body: some View {
         Group {
+            // 锁定/解锁选项
+            Button(item.isLocked ? "解锁" : "锁定") {
+                onToggleLock()
+            }
+            
+            Divider()
+            
             switch item.type {
             case .link:
                 Button("跳转至") {
@@ -806,7 +831,10 @@ struct CardContextMenu: View {
                     }
                 }
                 Divider()
-                Button("删除", role: .destructive, action: onDelete)
+                Button("删除", role: .destructive) {
+                    handleDelete()
+                }
+                .disabled(item.isLocked) // 锁定状态下禁用删除按钮
                 
             case .file, .image:
                 Button("复制文件名") {
@@ -848,12 +876,47 @@ struct CardContextMenu: View {
                     NSWorkspace.shared.selectFile(filePath, inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
                 }
                 Divider()
-                Button("删除", role: .destructive, action: onDelete)
+                Button("删除", role: .destructive) {
+                    handleDelete()
+                }
+                .disabled(item.isLocked) // 锁定状态下禁用删除按钮
                 
             default:
-                Button("删除", role: .destructive, action: onDelete)
+                Button("删除", role: .destructive) {
+                    handleDelete()
+                }
+                .disabled(item.isLocked) // 锁定状态下禁用删除按钮
             }
         }
+    }
+    
+    private func handleDelete() {
+        // 检查是否锁定（锁定状态下按钮已禁用，这里作为双重保护）
+        if item.isLocked {
+            return
+        }
+        
+        // 执行删除（会移动到回收站）
+        onDelete()
+    }
+}
+
+// MARK: - Locked Badge
+
+private struct LockedBadge: View {
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 10))
+            Text("已锁定")
+                .font(.system(size: 9, weight: .medium))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color.orange.opacity(0.8))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .padding(8)
     }
 }
 

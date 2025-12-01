@@ -21,6 +21,7 @@ struct RootView: View {
     @State private var searchText = ""
     @State private var showingSearch = false
     @State private var showingSettings = false
+    @State private var showingTrash = false
 
     // 使用 @State 来观察 WindowManager 的变化
     @State private var windowManager = WindowManager.shared
@@ -70,6 +71,15 @@ struct RootView: View {
                     .modelContainer(EchoFlowApp.sharedModelContainer)
                 windowManager.createSettingsPanel(with: settingsView)
                 showingSettings = false
+            }
+        }
+        .onChange(of: showingTrash) { oldValue, newValue in
+            if newValue {
+                // 使用 WindowManager 创建回收站窗口
+                let trashView = TrashView(isPresented: $showingTrash)
+                    .modelContainer(EchoFlowApp.sharedModelContainer)
+                windowManager.createTrashWindow(with: trashView)
+                showingTrash = false
             }
         }
     }
@@ -143,6 +153,15 @@ struct RootView: View {
             }
 
             Spacer()
+            
+            // 回收站按钮
+            Button(action: openTrash) {
+                Image(systemName: "trash")
+                    .font(.system(size: 15))
+                    .foregroundColor(.primary)
+            }
+            .buttonStyle(.plain)
+            .help("回收站")
 
             // 设置按钮
             Button(action: openSettings) {
@@ -186,6 +205,15 @@ struct RootView: View {
                 .buttonStyle(.plain)
                 .help("搜索")
 
+                // 回收站按钮
+                Button(action: openTrash) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 15))
+                        .foregroundColor(.primary)
+                }
+                .buttonStyle(.plain)
+                .help("回收站")
+                
                 // 设置按钮
                 Button(action: openSettings) {
                     Image(systemName: "gearshape")
@@ -244,6 +272,10 @@ struct RootView: View {
 
     private func openSettings() {
         showingSettings = true
+    }
+    
+    private func openTrash() {
+        showingTrash = true
     }
 }
 

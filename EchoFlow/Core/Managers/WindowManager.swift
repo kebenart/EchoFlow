@@ -38,6 +38,9 @@ final class WindowManager {
     
     /// 设置窗口
     var settingsWindow: NSWindow?
+    
+    /// 回收站窗口
+    var trashWindow: NSWindow?
 
     /// 当前停靠位置
     var dockPosition: DockPosition = .bottom {
@@ -124,6 +127,53 @@ final class WindowManager {
             window.close()
             settingsWindow = nil
             print("🪟 设置面板已关闭")
+        }
+    }
+    
+    /// 创建回收站窗口（居中显示）
+    func createTrashWindow<Content: View>(with contentView: Content) {
+        // 如果回收站窗口已存在，先关闭它
+        if let existingWindow = trashWindow {
+            existingWindow.close()
+        }
+        
+        // 创建 NSWindow
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: NSSize(width: 600, height: 500)),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        
+        // 配置窗口属性
+        window.title = "回收站"
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        
+        // 设置 SwiftUI 内容视图
+        window.contentView = NSHostingView(rootView: contentView)
+        
+        // 设置窗口居中位置
+        centerWindow(window)
+        
+        // 保存窗口引用
+        trashWindow = window
+        
+        // 激活应用并显示窗口
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        
+        print("🗑️ 回收站窗口已显示")
+    }
+    
+    /// 关闭回收站窗口
+    func closeTrashWindow() {
+        if let window = trashWindow {
+            window.close()
+            trashWindow = nil
+            print("🗑️ 回收站窗口已关闭")
         }
     }
 
@@ -214,6 +264,15 @@ final class WindowManager {
             self.isAnimating = false
             NotificationCenter.default.post(name: NSNotification.Name("RefreshClipboardData"), object: nil)
         })
+        
+        // 添加超时保护：如果动画在 0.5 秒后仍未完成，强制重置状态
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            if self.isAnimating {
+                print("⚠️ 显示动画超时，强制重置状态")
+                self.isAnimating = false
+            }
+        }
     }
 
     /// 隐藏面板（带动画）
@@ -267,14 +326,46 @@ final class WindowManager {
             // 执行回调
             completion?()
         })
+        
+        // 添加超时保护：如果动画在 0.4 秒后仍未完成，强制重置状态
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self = self else { return }
+            if self.isAnimating && !self.isVisible {
+                print("⚠️ 隐藏动画超时，强制重置状态")
+                self.isAnimating = false
+                panel.orderOut(nil)
+                completion?()
+            }
+        }
     }
 
 
     /// 切换面板显示/隐藏
     func togglePanel() {
-        // 如果动画正在进行，忽略切换请求
+        // 如果动画正在进行，等待动画完成后再执行
         if isAnimating {
-            print("⚠️ 动画进行中，忽略切换请求")
+            print("⚠️ 动画进行中，等待动画完成后切换")
+            // 延迟执行，等待当前动画完成
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self = self else { return }
+                // 再次检查，如果动画已完成则执行切换
+                if !self.isAnimating {
+                    if self.isVisible {
+                        self.hidePanel()
+                    } else {
+                        self.showPanel()
+                    }
+                } else {
+                    // 如果动画仍然在进行，强制重置状态（防止卡死）
+                    print("⚠️ 动画超时，强制重置状态")
+                    self.isAnimating = false
+                    if self.isVisible {
+                        self.hidePanel()
+                    } else {
+                        self.showPanel()
+                    }
+                }
+            }
             return
         }
 
