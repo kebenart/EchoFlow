@@ -97,14 +97,30 @@ final class HistoryCleanupManager {
         // 计算截止日期
         let cutoffDate = Date().addingTimeInterval(-Double(timeInterval))
         
-        // 查询需要删除的项目（排除收藏的项目）
+        // 获取是否删除锁定卡片的设置
+        let deleteLockedItems = UserDefaults.standard.bool(forKey: "deleteLockedItems")
+        
+        // 查询需要删除的项目（排除收藏的项目，根据设置决定是否排除锁定的项目）
         // 注意：SwiftData 的 #Predicate 不支持计算属性，必须直接使用 Date 比较
-        let descriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate<ClipboardItem> { item in
-                item.createdAt < cutoffDate && !item.isFavorite
-            },
-            sortBy: [SortDescriptor(\ClipboardItem.createdAt, order: .forward)]
-        )
+        // 注意：Predicate 闭包内只能包含一个表达式，不能使用多个 let 语句
+        let descriptor: FetchDescriptor<ClipboardItem>
+        if deleteLockedItems {
+            // 如果启用删除锁定卡片，则只排除收藏的项目
+            descriptor = FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate<ClipboardItem> { item in
+                    item.createdAt < cutoffDate && !item.isFavorite
+                },
+                sortBy: [SortDescriptor(\ClipboardItem.createdAt, order: .forward)]
+            )
+        } else {
+            // 如果未启用删除锁定卡片，则排除收藏和锁定的项目
+            descriptor = FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate<ClipboardItem> { item in
+                    item.createdAt < cutoffDate && !item.isFavorite && !item.isLocked
+                },
+                sortBy: [SortDescriptor(\ClipboardItem.createdAt, order: .forward)]
+            )
+        }
         
         do {
             let itemsToDelete = try context.fetch(descriptor)
@@ -126,4 +142,7 @@ final class HistoryCleanupManager {
         }
     }
 }
+
+
+
 

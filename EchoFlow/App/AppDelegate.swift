@@ -20,11 +20,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Application Lifecycle
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // 菜单栏应用不应该在关闭窗口时退出
+        return false
+    }
+    
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("🚀 EchoFlow 启动中...")
 
         // 隐藏 Dock 图标（设置为 accessory 应用）
         NSApp.setActivationPolicy(.accessory)
+        
+        // 立即关闭所有默认窗口，防止创建多个窗口
+        DispatchQueue.main.async {
+            NSApplication.shared.windows.forEach { window in
+                if !(window is NSPanel) && window != self.windowManager.settingsWindow {
+                    window.close()
+                }
+            }
+        }
+        
+        // 从 UserDefaults 加载显示模式设置
+        if let savedMode = UserDefaults.standard.string(forKey: "displayMode"),
+           let mode = DisplayMode(rawValue: savedMode) {
+            windowManager.displayMode = mode
+            print("📋 已加载保存的显示模式: \(mode.displayName)")
+        }
         
         // 从 UserDefaults 加载停靠位置设置
         if let savedPosition = UserDefaults.standard.string(forKey: "dockPosition"),
@@ -32,16 +53,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             windowManager.dockPosition = position
             print("📋 已加载保存的停靠位置: \(position.rawValue)")
         }
+        
+        // 从 UserDefaults 加载置顶设置
+        let alwaysOnTop = UserDefaults.standard.bool(forKey: "alwaysOnTop")
+        windowManager.isAlwaysOnTop = alwaysOnTop
 
         // 获取共享的 ModelContainer
         let container = EchoFlowApp.sharedModelContainer
 
-        // 创建主面板
+        // 根据显示模式创建窗口或面板
         let windowManager = WindowManager.shared
-        let rootView = RootView()
-            .modelContainer(container)
-
-        windowManager.createPanel(with: rootView)
+        if windowManager.displayMode == .window {
+            // 窗口模式：创建普通窗口并显示长条状列表
+            let windowView = ClipboardWindowView()
+                .modelContainer(container)
+            windowManager.createMainWindow(with: windowView)
+        } else {
+            // 面板模式：创建悬浮面板
+            let rootView = RootView()
+                .modelContainer(container)
+            windowManager.createPanel(with: rootView)
+        }
 
         // 设置菜单栏图标（根据设置决定是否显示）
         // 延迟创建以确保系统准备就绪
@@ -75,6 +107,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        
+        // 监听显示模式切换
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("DisplayModeChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            
+            let container = EchoFlowApp.sharedModelContainer
+            if windowManager.displayMode == .window {
+                // 切换到窗口模式
+                let windowView = ClipboardWindowView()
+                    .modelContainer(container)
+                windowManager.createMainWindow(with: windowView)
+            } else {
+                // 切换到面板模式
+                let rootView = RootView()
+                    .modelContainer(container)
+                windowManager.createPanel(with: rootView)
+            }
+        }
 
         // 配置热键
         setupHotKeys()
@@ -87,6 +141,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 初始化历史记录清理管理器
         HistoryCleanupManager.shared.modelContext = container.mainContext
         print("🧹 已设置 ModelContext 到 HistoryCleanupManager")
+        
+        // 初始化回收站管理器
+        TrashManager.shared.modelContext = container.mainContext
+        print("🗑️ 已设置 ModelContext 到 TrashManager")
+        
+        // 初始化备份管理器
+        BackupManager.shared.modelContext = container.mainContext
+        print("💾 已设置 ModelContext 到 BackupManager")
         
         // 生成样例数据（如果需要）
         SampleDataGenerator.shared.generateSampleDataIfNeeded(context: container.mainContext)
@@ -103,8 +165,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         // 检查更新（根据用户设置）
         checkForUpdatesOnLaunch()
+        
+        // 检查辅助功能权限状态（延迟检查，避免影响启动速度）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if !PasteSimulator.shared.checkAccessibilityPermission() {
+                let hasShown = UserDefaults.standard.bool(forKey: "hasShownPermissionAlert")
+                if !hasShown {
+                    UserDefaults.standard.set(true, forKey: "hasShownPermissionAlert")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        self.showPermissionAlertIfNeeded()
+                    }
+                }
+            }
+        }
 
         print("✅ EchoFlow 启动完成")
+    }
+    
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // 应用激活时的处理（已简化）
+    }
+    
+    /// 处理应用重新打开（双击 Dock 图标或 app）
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // 如果是菜单栏应用，不应该打开新窗口
+        // 根据显示模式切换窗口
+        if windowManager.displayMode == .window {
+            windowManager.toggleMainWindow()
+        } else {
+            if let panel = windowManager.panel, panel.isVisible {
+                windowManager.togglePanel()
+            }
+        }
+        return false // 返回 false 表示不处理重新打开，防止创建新窗口
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -217,7 +310,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Actions
 
     @objc private func togglePanel() {
-        windowManager.togglePanel()
+        // 根据显示模式切换对应的窗口
+        if windowManager.displayMode == .window {
+            windowManager.toggleMainWindow()
+        } else {
+            windowManager.togglePanel()
+        }
     }
 
     @objc private func openSettings() {
@@ -282,6 +380,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     print("✅ 当前已是最新版本")
                 }
             }
+        }
+    }
+    
+    /// 显示权限提示（如果需要）
+    private func showPermissionAlertIfNeeded() {
+        guard !PasteSimulator.shared.checkAccessibilityPermission() else {
+            return
+        }
+        
+        let alert = NSAlert()
+        alert.messageText = "需要辅助功能权限"
+        alert.informativeText = "EchoFlow 需要辅助功能权限来实现自动粘贴功能。\n\n请在系统设置中授予权限。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "稍后提醒")
+        alert.addButton(withTitle: "不再提醒")
+        
+        let response = alert.runModal()
+        
+        switch response {
+        case .alertFirstButtonReturn:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
+        case .alertThirdButtonReturn:
+            UserDefaults.standard.set(true, forKey: "dontShowPermissionAlert")
+        default:
+            break
         }
     }
 }

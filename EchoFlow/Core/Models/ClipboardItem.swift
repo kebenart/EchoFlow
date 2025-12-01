@@ -61,7 +61,10 @@ final class ClipboardItem {
     var createdAt: Date
 
     /// 是否收藏
-    var isFavorite: Bool
+    var isFavorite: Bool = false
+    
+    /// 是否锁定（锁定的卡片不会被自动删除）
+    var isLocked: Bool = false
 
     /// 内容哈希值 (用于去重)
     var contentHash: String
@@ -150,6 +153,7 @@ final class ClipboardItem {
         themeColorHex: String = "#007ACC",
         createdAt: Date = Date(),
         isFavorite: Bool = false,
+        isLocked: Bool = false,
         linkTitle: String? = nil,
         linkFaviconData: Data? = nil,
         fileSize: Int64? = nil
@@ -164,6 +168,7 @@ final class ClipboardItem {
         self.themeColorHex = themeColorHex
         self.createdAt = createdAt
         self.isFavorite = isFavorite
+        self.isLocked = isLocked
         self.linkTitle = linkTitle
         self.linkFaviconData = linkFaviconData
         self.fileSize = fileSize

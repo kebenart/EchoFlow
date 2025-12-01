@@ -22,20 +22,21 @@ final class PasteSimulator {
 
     /// 检查辅助功能权限
     func checkAccessibilityPermission() -> Bool {
+        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false]
+        return AXIsProcessTrustedWithOptions(options)
+    }
+    
+    /// 请求辅助功能权限（会弹出系统提示）
+    func requestAccessibilityPermission() -> Bool {
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        let accessEnabled = AXIsProcessTrustedWithOptions(options)
-
-        if !accessEnabled {
-            print("⚠️ 需要辅助功能权限才能模拟粘贴")
-        }
-
-        return accessEnabled
+        return AXIsProcessTrustedWithOptions(options)
     }
 
     /// 模拟粘贴操作 (Cmd + V)
     func simulatePaste(delay: TimeInterval = 0.05) {
-        // 检查权限
-        guard checkAccessibilityPermission() else {
+        // 静默检查权限（不弹出系统提示）
+        if !checkAccessibilityPermission() {
+            // 如果没有权限，显示自定义提示对话框
             showPermissionAlert()
             return
         }
@@ -90,21 +91,16 @@ final class PasteSimulator {
 
     /// 显示权限请求对话框
     private func showPermissionAlert() {
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "需要辅助功能权限"
-            alert.informativeText = "EchoFlow 需要辅助功能权限来实现自动粘贴功能。\n\n请在\"系统设置 > 隐私与安全性 > 辅助功能\"中授予权限。"
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "打开系统设置")
-            alert.addButton(withTitle: "取消")
+        let alert = NSAlert()
+        alert.messageText = "需要辅助功能权限"
+        alert.informativeText = "EchoFlow 需要辅助功能权限来实现自动粘贴功能。\n\n请在系统设置中授予权限。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "取消")
 
-            let response = alert.runModal()
-
-            if response == .alertFirstButtonReturn {
-                // 打开系统设置
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                    NSWorkspace.shared.open(url)
-                }
+        if alert.runModal() == .alertFirstButtonReturn {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
             }
         }
     }

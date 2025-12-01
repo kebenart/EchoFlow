@@ -44,6 +44,17 @@ struct NoteCard: View, Equatable {
                 startEditingContent()
             }
         })
+        .contextMenu {
+            NoteCardContextMenu(
+                note: note,
+                onToggleLock: {
+                    toggleLock()
+                },
+                onDelete: {
+                    deleteNote()
+                }
+            )
+        }
         .onAppear(perform: syncStateFromModel)
         // 监听焦点丢失，自动保存
         .onChange(of: isFocused) { _, newValue in
@@ -61,7 +72,7 @@ struct NoteCard: View, Equatable {
         }
         .padding(18)
         .frame(width: 240, height: 240)
-        .background(Color.white.opacity(0.96))
+        .background(Color.white) // 纯白背景
         .clipShape(RoundedRectangle(cornerRadius: 12))
         // 样式修饰符提取
         .modifier(CardStyleModifier(
@@ -72,34 +83,74 @@ struct NoteCard: View, Equatable {
         .id("card-\(note.id)-\(isFocused)")
     }
 
+    @AppStorage("cardFontName") private var cardFontName: String = "SF Pro Text"
+    @AppStorage("cardFontSize") private var cardFontSize: Double = 12.0
+    
+    private var cardHeaderFont: Font {
+        let fontSize = CGFloat(cardFontSize > 0 ? cardFontSize * 1.08 : 13.0) // 标题使用稍大字体
+        if let font = NSFont(name: cardFontName, size: fontSize) {
+            return Font(font).weight(.semibold)
+        }
+        return .system(size: fontSize, weight: .semibold)
+    }
+    
     @ViewBuilder
     private var headerView: some View {
         if isEditingTitle {
             TextField("标题", text: $editingTitle, onCommit: saveTitle)
-                .font(.system(size: 13, weight: .semibold))
+                .font(cardHeaderFont)
                 .textFieldStyle(.plain)
-                .foregroundColor(.primary)
+                .foregroundColor(Color(NSColor.black)) // 固定深色，在白色背景上始终可见
+                .onChange(of: isFocused) { _, newValue in
+                    // 失去焦点时自动保存
+                    if !newValue && isEditingTitle {
+                        saveTitle()
+                    }
+                }
         } else {
             Text(note.title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.primary)
+                .font(cardHeaderFont)
+                .foregroundColor(Color(NSColor.black)) // 固定深色，在白色背景上始终可见
                 .lineLimit(2)
                 .allowsHitTesting(false) // 允许点击穿透给 Button
         }
     }
 
+    private var cardBodyFont: Font {
+        let fontSize = CGFloat(cardFontSize > 0 ? cardFontSize * 0.92 : 11.0) // 内容使用稍小字体
+        if let font = NSFont(name: cardFontName, size: fontSize) {
+            return Font(font)
+        }
+        return .system(size: fontSize, design: .default)
+    }
+    
     @ViewBuilder
     private var bodyTextView: some View {
         if isEditingContent {
             // 自定义 NSViewWrapper 用于多行编辑和 ESC 捕捉
-            NoteTextEditor(text: $editingContent, onSave: saveContent)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .frame(maxHeight: .infinity)
+            NoteTextEditor(
+                text: $editingContent,
+                onSave: saveContent,
+                onFocusLost: {
+                    // 失去焦点时自动保存
+                    if isEditingContent {
+                        saveContent()
+                    }
+                }
+            )
+            .font(cardBodyFont)
+            .foregroundColor(Color(NSColor.darkGray)) // 固定深灰色，在白色背景上始终可见
+            .frame(maxHeight: .infinity)
+            .onChange(of: isFocused) { _, newValue in
+                // 卡片失去焦点时自动保存
+                if !newValue && isEditingContent {
+                    saveContent()
+                }
+            }
         } else {
             Text(note.contentPreview)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+                .font(cardBodyFont)
+                .foregroundColor(Color(NSColor.darkGray)) // 固定深灰色，在白色背景上始终可见
                 .lineLimit(8)
                 .frame(maxHeight: .infinity, alignment: .topLeading)
                 .allowsHitTesting(false)
@@ -108,6 +159,11 @@ struct NoteCard: View, Equatable {
 
     private var footerView: some View {
         HStack {
+            if note.isLocked {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange)
+            }
             if note.isPinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 10))
@@ -116,7 +172,7 @@ struct NoteCard: View, Equatable {
             Spacer()
             Text(note.relativeTimeString)
                 .font(.system(size: 9))
-                .foregroundColor(.secondary)
+                .foregroundColor(Color(NSColor.gray)) // 固定灰色，在白色背景上始终可见
         }
     }
 
@@ -184,6 +240,67 @@ struct NoteCard: View, Equatable {
             print("❌ 保存失败: \(error)")
         }
     }
+    
+    private func toggleLock() {
+        note.isLocked.toggle()
+        do {
+            try modelContext.save()
+        } catch {
+            print("❌ 切换锁定状态失败: \(error)")
+        }
+    }
+    
+    private func deleteNote() {
+        // 检查是否锁定
+        if note.isLocked {
+            // 显示提示，告知用户需要先解锁
+            let alert = NSAlert()
+            alert.messageText = "无法删除"
+            alert.informativeText = "该笔记已锁定，请先解锁后再删除。"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "知道了")
+            alert.runModal()
+            return
+        }
+        
+        // 检查是否启用回收站
+        if TrashManager.isEnabled {
+            // 移动到回收站
+            do {
+                try TrashManager.shared.moveToTrash(note)
+            } catch {
+                print("❌ 移动到回收站失败: \(error)")
+                // 如果失败，直接删除
+                modelContext.delete(note)
+                try? modelContext.save()
+            }
+        } else {
+            // 直接删除
+            modelContext.delete(note)
+            try? modelContext.save()
+        }
+    }
+}
+
+// MARK: - Note Card Context Menu
+
+private struct NoteCardContextMenu: View {
+    let note: NoteItem
+    let onToggleLock: () -> Void
+    let onDelete: () -> Void
+    
+    var body: some View {
+        Button(note.isLocked ? "解锁" : "锁定") {
+            onToggleLock()
+        }
+        
+        Divider()
+        
+        Button("删除", role: .destructive) {
+            onDelete()
+        }
+        .disabled(note.isLocked) // 锁定状态下禁用删除按钮
+    }
 }
 
 // MARK: - Styling Components
@@ -227,16 +344,39 @@ struct NoteCardButtonStyle: ButtonStyle {
 struct NoteTextEditor: NSViewRepresentable {
     @Binding var text: String
     var onSave: () -> Void
+    var onFocusLost: (() -> Void)?
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
         let textView = scrollView.documentView as! NSTextView
         
+        // 隐藏滚动条
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = false
+        
         textView.delegate = context.coordinator
         textView.isRichText = false
-        textView.font = .systemFont(ofSize: 11)
+        
+        // 使用用户设置的字体和大小
+        let cardFontName = UserDefaults.standard.string(forKey: "cardFontName") ?? "SF Pro Text"
+        let cardFontSize = CGFloat(UserDefaults.standard.double(forKey: "cardFontSize"))
+        let fontSize = cardFontSize > 0 ? cardFontSize * 0.92 : 11.0
+        if let font = NSFont(name: cardFontName, size: fontSize) {
+            textView.font = font
+        } else {
+            textView.font = .systemFont(ofSize: fontSize)
+        }
+        
+        // 使用固定深灰色文字，确保在白色背景上始终可见（深色模式兼容）
+        textView.textColor = NSColor.darkGray
+        textView.insertionPointColor = NSColor.darkGray
+        
         textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: -4, height: 0) 
+        textView.textContainerInset = NSSize(width: -4, height: 0)
+        
+        // 监听窗口失去焦点
+        context.coordinator.setupFocusNotifications(for: textView)
         
         // 自动聚焦
         DispatchQueue.main.async {
@@ -250,6 +390,22 @@ struct NoteTextEditor: NSViewRepresentable {
         if textView.string != text {
             textView.string = text
         }
+        
+        // 更新字体（如果设置变化）
+        let cardFontName = UserDefaults.standard.string(forKey: "cardFontName") ?? "SF Pro Text"
+        let cardFontSize = CGFloat(UserDefaults.standard.double(forKey: "cardFontSize"))
+        let fontSize = cardFontSize > 0 ? cardFontSize * 0.92 : 11.0
+        if let font = NSFont(name: cardFontName, size: fontSize) {
+            textView.font = font
+        } else {
+            textView.font = .systemFont(ofSize: fontSize)
+        }
+        
+        // 保持固定深灰色文字（深色模式兼容）
+        textView.textColor = NSColor.darkGray
+        
+        // 更新 coordinator 的 onFocusLost 回调
+        context.coordinator.onFocusLost = onFocusLost
     }
 
     func makeCoordinator() -> Coordinator {
@@ -258,11 +414,68 @@ struct NoteTextEditor: NSViewRepresentable {
 
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: NoteTextEditor
-        init(_ parent: NoteTextEditor) { self.parent = parent }
+        var onFocusLost: (() -> Void)?
+        private var focusObserver: NSObjectProtocol?
+        
+        init(_ parent: NoteTextEditor) {
+            self.parent = parent
+            self.onFocusLost = parent.onFocusLost
+        }
+        
+        func setupFocusNotifications(for textView: NSTextView) {
+            // 监听文本编辑结束（当用户点击其他地方或切换焦点时）
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleTextDidEndEditing),
+                name: NSText.didEndEditingNotification,
+                object: textView
+            )
+            
+            // 监听窗口失去焦点
+            if let window = textView.window {
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(windowDidResignKey),
+                    name: NSWindow.didResignKeyNotification,
+                    object: window
+                )
+            }
+        }
+        
+        @objc private func windowDidResignKey(_ notification: Notification) {
+            // 窗口失去焦点时保存
+            handleFocusLost()
+        }
+        
+        @objc private func handleTextDidEndEditing(_ notification: Notification) {
+            // 文本编辑结束时保存
+            handleFocusLost()
+        }
+        
+        private func handleFocusLost() {
+            // 延迟一点保存，确保文本已更新
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.onFocusLost?()
+            }
+        }
+        
+        deinit {
+            if let observer = focusObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            NotificationCenter.default.removeObserver(self)
+        }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
+        }
+        
+        // NSTextDelegate 方法：文本编辑结束（必须与协议一致）
+        func textDidEndEditing(_ notification: Notification) {
+            // 文本编辑结束时保存
+            handleFocusLost()
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {

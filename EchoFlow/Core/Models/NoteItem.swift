@@ -28,7 +28,10 @@ final class NoteItem {
     var colorTheme: String
 
     /// 是否置顶
-    var isPinned: Bool
+    var isPinned: Bool = false
+    
+    /// 是否锁定（锁定的笔记不会被自动删除）
+    var isLocked: Bool = false
     
     var uiColor: Color {
         Color(hex: self.colorTheme) ?? .gray
@@ -125,7 +128,8 @@ final class NoteItem {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         colorTheme: String = "#FF6B6B",
-        isPinned: Bool = false
+        isPinned: Bool = false,
+        isLocked: Bool = false
     ) {
         self.id = id
         self.content = content
@@ -133,6 +137,7 @@ final class NoteItem {
         self.updatedAt = updatedAt
         self.colorTheme = colorTheme
         self.isPinned = isPinned
+        self.isLocked = isLocked
     }
 
     /// 仅更新标题（保留剩余内容）

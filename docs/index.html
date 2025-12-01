@@ -729,6 +729,7 @@
         <ul class="nav-links">
             <li><a href="#features">功能</a></li>
             <li><a href="#shortcuts">快捷键</a></li>
+            <li><a href="#permissions">权限帮助</a></li>
             <li><a href="https://github.com/kebenart/EchoFlow" target="_blank">GitHub</a></li>
         </ul>
         <a href="https://github.com/kebenart/EchoFlow/releases/latest" class="nav-btn">下载</a>
@@ -898,6 +899,53 @@
         </div>
     </section>
 
+    <!-- Permissions Section -->
+    <section class="features" id="permissions" style="background: var(--bg-secondary);">
+        <div class="section-header">
+            <h2>权限帮助</h2>
+            <p>EchoFlow 需要辅助功能权限来实现自动粘贴功能</p>
+        </div>
+        <div class="features-grid" style="max-width: 900px; margin: 0 auto;">
+            <div class="feature-card">
+                <div class="feature-icon">🔐</div>
+                <h3>为什么需要权限？</h3>
+                <p>EchoFlow 使用 macOS 的 Accessibility API 来模拟键盘操作（⌘V），实现自动粘贴功能。这是 macOS 的安全机制，需要用户明确授权。</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">✅</div>
+                <h3>如何授权？</h3>
+                <p>1. 首次使用时，点击剪贴板卡片会弹出权限提示<br>
+                   2. 点击"打开系统设置"按钮<br>
+                   3. 在辅助功能列表中找到 EchoFlow 并勾选<br>
+                   4. 重新启动应用</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔍</div>
+                <h3>检查权限状态</h3>
+                <p>在应用设置页面可以查看权限状态。如果显示"已授权"（绿色勾选图标），说明权限已生效。</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">⚠️</div>
+                <h3>常见问题</h3>
+                <p><strong>授权后仍然提示需要权限？</strong><br>
+                   → 完全退出应用（⌘Q）后重新启动<br><br>
+                   <strong>系统设置中找不到应用？</strong><br>
+                   → 点击列表下方的 ➕ 按钮手动添加</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🧹</div>
+                <h3>清理权限</h3>
+                <p>如果权限出现混乱，可以使用修复脚本清理：<br><br>
+                   <code style="background: rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 4px; font-size: 0.85em;">./scripts/fix-permissions.sh</code></p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">📚</div>
+                <h3>详细帮助</h3>
+                <p>查看项目根目录的 <code style="background: rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 4px; font-size: 0.85em;">PERMISSION_HELP.md</code> 文件获取完整的权限帮助指南。</p>
+            </div>
+        </div>
+    </section>
+
     <!-- Download Section -->
     <section class="download" id="download">
         <div class="download-content">
@@ -942,6 +990,7 @@
         <div class="footer-links">
             <a href="https://github.com/kebenart/EchoFlow" target="_blank">GitHub</a>
             <a href="https://github.com/kebenart/EchoFlow/releases" target="_blank">Releases</a>
+            <a href="#permissions">权限帮助</a>
             <a href="https://github.com/kebenart/EchoFlow/issues" target="_blank">反馈问题</a>
         </div>
         <p class="footer-copyright">
@@ -1044,3 +1093,6 @@
     </script>
 </body>
 </html>
+
+
+

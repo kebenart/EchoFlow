@@ -8,6 +8,19 @@
 import AppKit
 import SwiftUI
 
+/// 显示模式
+enum DisplayMode: String, CaseIterable {
+    case panel = "panel"      // 面板模式（展开折叠）
+    case window = "window"    // 窗口模式（长条状）
+    
+    var displayName: String {
+        switch self {
+        case .panel: return "面板模式"
+        case .window: return "窗口模式"
+        }
+    }
+}
+
 /// 窗口停靠位置
 enum DockPosition: String, CaseIterable {
     case bottom = "bottom"
@@ -36,8 +49,23 @@ final class WindowManager {
     /// 主面板窗口
     var panel: NSPanel?
     
+    /// 窗口模式的窗口
+    var mainWindow: NSWindow?
+    
     /// 设置窗口
     var settingsWindow: NSWindow?
+    
+    /// 回收站窗口
+    var trashWindow: NSWindow?
+
+    /// 当前显示模式
+    var displayMode: DisplayMode = .panel {
+        didSet {
+            if displayMode != oldValue {
+                switchDisplayMode()
+            }
+        }
+    }
 
     /// 当前停靠位置
     var dockPosition: DockPosition = .bottom {
@@ -53,6 +81,15 @@ final class WindowManager {
 
     /// 动画是否正在进行中
     var isAnimating: Bool = false
+    
+    /// 窗口是否置顶
+    var isAlwaysOnTop: Bool = false {
+        didSet {
+            if isAlwaysOnTop != oldValue {
+                updateWindowLevel()
+            }
+        }
+    }
 
     // MARK: - Constants
 
@@ -124,6 +161,53 @@ final class WindowManager {
             window.close()
             settingsWindow = nil
             print("🪟 设置面板已关闭")
+        }
+    }
+    
+    /// 创建回收站窗口（居中显示）
+    func createTrashWindow<Content: View>(with contentView: Content) {
+        // 如果回收站窗口已存在，先关闭它
+        if let existingWindow = trashWindow {
+            existingWindow.close()
+        }
+        
+        // 创建 NSWindow
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: NSSize(width: 600, height: 500)),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        
+        // 配置窗口属性
+        window.title = "回收站"
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        
+        // 设置 SwiftUI 内容视图
+        window.contentView = NSHostingView(rootView: contentView)
+        
+        // 设置窗口居中位置
+        centerWindow(window)
+        
+        // 保存窗口引用
+        trashWindow = window
+        
+        // 激活应用并显示窗口
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        
+        print("🗑️ 回收站窗口已显示")
+    }
+    
+    /// 关闭回收站窗口
+    func closeTrashWindow() {
+        if let window = trashWindow {
+            window.close()
+            trashWindow = nil
+            print("🗑️ 回收站窗口已关闭")
         }
     }
 
@@ -214,6 +298,15 @@ final class WindowManager {
             self.isAnimating = false
             NotificationCenter.default.post(name: NSNotification.Name("RefreshClipboardData"), object: nil)
         })
+        
+        // 添加超时保护：如果动画在 0.5 秒后仍未完成，强制重置状态
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            if self.isAnimating {
+                print("⚠️ 显示动画超时，强制重置状态")
+                self.isAnimating = false
+            }
+        }
     }
 
     /// 隐藏面板（带动画）
@@ -267,14 +360,46 @@ final class WindowManager {
             // 执行回调
             completion?()
         })
+        
+        // 添加超时保护：如果动画在 0.4 秒后仍未完成，强制重置状态
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self = self else { return }
+            if self.isAnimating && !self.isVisible {
+                print("⚠️ 隐藏动画超时，强制重置状态")
+                self.isAnimating = false
+                panel.orderOut(nil)
+                completion?()
+            }
+        }
     }
 
 
     /// 切换面板显示/隐藏
     func togglePanel() {
-        // 如果动画正在进行，忽略切换请求
+        // 如果动画正在进行，等待动画完成后再执行
         if isAnimating {
-            print("⚠️ 动画进行中，忽略切换请求")
+            print("⚠️ 动画进行中，等待动画完成后切换")
+            // 延迟执行，等待当前动画完成
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self = self else { return }
+                // 再次检查，如果动画已完成则执行切换
+                if !self.isAnimating {
+                    if self.isVisible {
+                        self.hidePanel()
+                    } else {
+                        self.showPanel()
+                    }
+                } else {
+                    // 如果动画仍然在进行，强制重置状态（防止卡死）
+                    print("⚠️ 动画超时，强制重置状态")
+                    self.isAnimating = false
+                    if self.isVisible {
+                        self.hidePanel()
+                    } else {
+                        self.showPanel()
+                    }
+                }
+            }
             return
         }
 
@@ -432,5 +557,145 @@ final class WindowManager {
         }
 
         return origin
+    }
+    
+    // MARK: - Window Mode Support
+    
+    /// 切换显示模式
+    private func switchDisplayMode() {
+        // 关闭当前模式的窗口
+        if displayMode == .window {
+            // 从面板模式切换到窗口模式
+            if let panel = panel {
+                panel.close()
+                self.panel = nil
+            }
+        } else {
+            // 从窗口模式切换到面板模式
+            if let window = mainWindow {
+                window.close()
+                self.mainWindow = nil
+            }
+        }
+        
+        // 通知需要重新创建窗口
+        NotificationCenter.default.post(name: NSNotification.Name("DisplayModeChanged"), object: nil)
+        print("✅ 显示模式已切换为: \(displayMode.displayName)")
+    }
+    
+    /// 创建窗口模式的主窗口
+    func createMainWindow<Content: View>(with contentView: Content) {
+        // 如果已有窗口，先关闭
+        if let oldWindow = mainWindow {
+            oldWindow.close()
+        }
+        
+        // 获取窗口高度设置
+        let height = CGFloat(UserDefaults.standard.double(forKey: "windowHeight"))
+        let windowHeight = height > 0 ? height : 400.0
+        
+        // 创建 NSWindow（默认宽度改为400，隐藏标题栏）
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: NSSize(width: 400, height: windowHeight)),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        
+        // 配置窗口属性
+        window.title = "EchoFlow"
+        window.isReleasedWhenClosed = false
+        window.minSize = NSSize(width: 350, height: 300)
+        window.maxSize = NSSize(width: 1200, height: 900)
+        
+        // 隐藏标题栏但保留关闭按钮
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        
+        // 显示关闭按钮，隐藏其他按钮
+        window.standardWindowButton(.closeButton)?.isHidden = false
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+        
+        // 背景配置（与折叠模式一致）
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        
+        // 设置窗口级别
+        let alwaysOnTop = UserDefaults.standard.bool(forKey: "alwaysOnTop")
+        window.level = alwaysOnTop ? .floating : .normal
+        
+        // 窗口行为
+        window.isMovable = true
+        window.isMovableByWindowBackground = true
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        
+        // 设置 SwiftUI 内容视图
+        window.contentView = NSHostingView(rootView: contentView)
+        
+        // 居中显示
+        centerWindow(window)
+        
+        // 保存窗口引用
+        mainWindow = window
+        
+        // 显示窗口
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        
+        isVisible = true
+        print("🪟 窗口模式主窗口已显示")
+    }
+    
+    /// 更新窗口大小
+    func updateWindowSize() {
+        guard let window = mainWindow else { return }
+        
+        let height = CGFloat(UserDefaults.standard.double(forKey: "windowHeight"))
+        let windowHeight = height > 0 ? height : 400.0
+        
+        var frame = window.frame
+        let oldHeight = frame.height
+        let heightDelta = windowHeight - oldHeight
+        
+        // 调整高度，保持窗口顶部位置不变
+        frame.size.height = windowHeight
+        frame.origin.y -= heightDelta
+        
+        window.setFrame(frame, display: true, animate: true)
+        print("🪟 窗口高度已更新为: \(Int(windowHeight)) px")
+    }
+    
+    /// 更新窗口层级（置顶）
+    private func updateWindowLevel() {
+        if displayMode == .window, let window = mainWindow {
+            window.level = isAlwaysOnTop ? .floating : .normal
+            print("🪟 窗口置顶状态已更新: \(isAlwaysOnTop)")
+        }
+    }
+    
+    /// 显示主窗口（窗口模式）
+    func showMainWindow() {
+        guard let window = mainWindow else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        isVisible = true
+    }
+    
+    /// 隐藏主窗口（窗口模式）
+    func hideMainWindow() {
+        guard let window = mainWindow else { return }
+        window.orderOut(nil)
+        isVisible = false
+    }
+    
+    /// 切换主窗口显示（窗口模式）
+    func toggleMainWindow() {
+        if isVisible {
+            hideMainWindow()
+        } else {
+            showMainWindow()
+        }
     }
 }

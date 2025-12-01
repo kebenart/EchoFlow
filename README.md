@@ -78,6 +78,9 @@ open EchoFlow.xcodeproj
 
 1. 打开 **系统设置** → **隐私与安全性** → **辅助功能**
 2. 找到并启用 **EchoFlow**
+3. 重新启动应用以使权限生效
+
+**遇到权限问题？** 查看 [权限帮助指南](PERMISSION_HELP.md) 获取详细帮助。
 
 ---
 
@@ -205,7 +208,10 @@ EchoFlow/
 <details>
 <summary><b>Q: 自动粘贴不工作？</b></summary>
 
-请确保已在系统设置中授予 EchoFlow 辅助功能权限。
+请确保已在系统设置中授予 EchoFlow 辅助功能权限。如果已授权但仍然不工作，请：
+1. 完全退出应用（⌘Q）后重新启动
+2. 在设置页面点击"重新检查"按钮
+3. 查看 [权限帮助指南](PERMISSION_HELP.md) 获取详细帮助
 </details>
 
 <details>
@@ -227,6 +233,13 @@ EchoFlow/
 </details>
 
 ---
+
+## 📚 文档
+
+- [快速开始指南](QUICKSTART.md) - 详细的安装和使用说明
+- [权限帮助指南](PERMISSION_HELP.md) - 权限授权和问题解决
+- [构建指南](BUILD_GUIDE.md) - 如何构建安装包
+- [脚本说明](scripts/README.md) - 自动化脚本使用说明
 
 ## 📄 许可证
 
