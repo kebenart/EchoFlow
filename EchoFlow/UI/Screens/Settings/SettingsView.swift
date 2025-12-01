@@ -34,8 +34,11 @@ enum SettingsTab: String, CaseIterable {
 /// 设置视图
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("displayMode") private var displayModeRaw: String = "panel"
     @AppStorage("dockPosition") private var dockPositionRaw: String = "bottom"
     @AppStorage("autoHide") private var autoHide: Bool = true
+    @AppStorage("alwaysOnTop") private var alwaysOnTop: Bool = false
+    @AppStorage("windowHeight") private var windowHeight: Double = 400.0
     @AppStorage("copyBehavior") private var copyBehaviorRaw: String = "copyToPasteboard"
     @AppStorage("historyRetentionPeriod") private var historyRetentionPeriodRaw: String = HistoryRetentionPeriod.oneWeek.rawValue
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
@@ -47,10 +50,17 @@ struct SettingsView: View {
     @AppStorage("checkForUpdatesOnLaunch") private var checkForUpdatesOnLaunch: Bool = true
     @AppStorage("hotKeyKeyCode") private var hotKeyKeyCode: Int = 0x0B // B
     @AppStorage("hotKeyModifiersRaw") private var hotKeyModifiersRaw: Int = Int(cmdKey)
+    @AppStorage("cardFontName") private var cardFontName: String = "SF Pro Text"
+    @AppStorage("cardFontSize") private var cardFontSize: Double = 12.0
     
     var hotKeyModifiers: UInt32 {
         get { UInt32(hotKeyModifiersRaw) }
         set { hotKeyModifiersRaw = Int(newValue) }
+    }
+    
+    var displayMode: DisplayMode {
+        get { DisplayMode(rawValue: displayModeRaw) ?? .panel }
+        set { displayModeRaw = newValue.rawValue }
     }
     
     @State private var selectedTab: SettingsTab = .general
@@ -104,13 +114,18 @@ struct SettingsView: View {
         switch selectedTab {
         case .general:
             GeneralSettingsView(
+                displayModeRaw: $displayModeRaw,
                 dockPositionRaw: $dockPositionRaw,
                 autoHide: $autoHide,
+                alwaysOnTop: $alwaysOnTop,
+                windowHeight: $windowHeight,
                 copyBehaviorRaw: $copyBehaviorRaw,
                 historyRetentionPeriodRaw: $historyRetentionPeriodRaw,
                 launchAtLogin: $launchAtLogin,
                 showStatusBarIcon: $showStatusBarIcon,
-                enableCoolMode: $enableCoolMode
+                enableCoolMode: $enableCoolMode,
+                cardFontName: $cardFontName,
+                cardFontSize: $cardFontSize
             )
         case .rules:
             RulesSettingsView(
@@ -136,15 +151,26 @@ struct SettingsView: View {
 // MARK: - General Settings
 
 private struct GeneralSettingsView: View {
+    @Binding var displayModeRaw: String
     @Binding var dockPositionRaw: String
     @Binding var autoHide: Bool
+    @Binding var alwaysOnTop: Bool
+    @Binding var windowHeight: Double
     @Binding var copyBehaviorRaw: String
     @Binding var historyRetentionPeriodRaw: String
     @Binding var launchAtLogin: Bool
     @Binding var showStatusBarIcon: Bool
     @Binding var enableCoolMode: Bool
+    @Binding var cardFontName: String
+    @Binding var cardFontSize: Double
     
     @State private var accessibilityPermissionGranted: Bool = false
+    @State private var availableFonts: [String] = []
+    
+    var displayMode: DisplayMode {
+        get { DisplayMode(rawValue: displayModeRaw) ?? .panel }
+        set { displayModeRaw = newValue.rawValue }
+    }
     
     var dockPosition: DockPosition {
         get { DockPosition(rawValue: dockPositionRaw) ?? .bottom }
@@ -158,39 +184,78 @@ private struct GeneralSettingsView: View {
     
     var body: some View {
         Form {
-            Section("窗口设置") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("停靠位置")
-                    
-                    DockPositionPicker(selectedPosition: Binding(
-                        get: { dockPosition },
-                        set: { dockPositionRaw = $0.rawValue }
-                    ))
-                }
-                .onChange(of: dockPosition) { oldValue, newValue in
-                    // 更新 WindowManager 的停靠位置
-                    WindowManager.shared.dockPosition = newValue
-                    // 保存到 UserDefaults
-                    UserDefaults.standard.set(newValue.rawValue, forKey: "dockPosition")
-                    print("✅ 停靠位置已更新为: \(newValue.rawValue)")
-                    
-                    // 重新创建面板以应用新的布局
-                    Task { @MainActor in
-                        let container = EchoFlowApp.sharedModelContainer
-                        let rootView = RootView()
-                            .modelContainer(container)
-                        
-                        WindowManager.shared.createPanel(with: rootView)
-                        
-                        // 如果面板可见，重新显示
-                        if WindowManager.shared.isVisible {
-                            WindowManager.shared.showPanel()
-                        }
+            Section("显示模式") {
+                Picker("模式", selection: Binding(
+                    get: { displayMode },
+                    set: { newMode in
+                        displayModeRaw = newMode.rawValue
+                        WindowManager.shared.displayMode = newMode
+                        UserDefaults.standard.set(newMode.rawValue, forKey: "displayMode")
+                    }
+                )) {
+                    ForEach(DisplayMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
                     }
                 }
+                .pickerStyle(.segmented)
+                .help("选择窗口的显示方式")
+            }
+            
+            Section("窗口设置") {
+                // 面板模式下显示停靠位置
+                if displayMode == .panel {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("停靠位置")
+                        
+                        DockPositionPicker(selectedPosition: Binding(
+                            get: { dockPosition },
+                            set: { dockPositionRaw = $0.rawValue }
+                        ))
+                    }
+                    .onChange(of: dockPosition) { oldValue, newValue in
+                        // 更新 WindowManager 的停靠位置
+                        WindowManager.shared.dockPosition = newValue
+                        // 保存到 UserDefaults
+                        UserDefaults.standard.set(newValue.rawValue, forKey: "dockPosition")
+                        print("✅ 停靠位置已更新为: \(newValue.rawValue)")
+                        
+                        // 重新创建面板以应用新的布局
+                        Task { @MainActor in
+                            let container = EchoFlowApp.sharedModelContainer
+                            let rootView = RootView()
+                                .modelContainer(container)
+                            
+                            WindowManager.shared.createPanel(with: rootView)
+                            
+                            // 如果面板可见，重新显示
+                            if WindowManager.shared.isVisible {
+                                WindowManager.shared.showPanel()
+                            }
+                        }
+                    }
+                    
+                    Toggle("失去焦点时自动隐藏", isOn: $autoHide)
+                        .help("面板失去焦点时自动隐藏")
+                }
                 
-                Toggle("失去焦点时自动隐藏", isOn: $autoHide)
-                    .help("面板失去焦点时自动隐藏")
+                // 窗口模式下显示窗口高度和置顶选项
+                if displayMode == .window {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("窗口高度: \(Int(windowHeight)) px")
+                            .font(.subheadline)
+                        
+                        Slider(value: $windowHeight, in: 300...900, step: 50)
+                            .onChange(of: windowHeight) { _, _ in
+                                WindowManager.shared.updateWindowSize()
+                            }
+                    }
+                    
+                    Toggle("窗口置顶", isOn: $alwaysOnTop)
+                        .help("窗口始终显示在其他窗口上方")
+                        .onChange(of: alwaysOnTop) { _, newValue in
+                            WindowManager.shared.isAlwaysOnTop = newValue
+                        }
+                }
                 
                 Picker("复制行为", selection: $copyBehaviorRaw) {
                     Text("仅复制到粘贴板").tag("copyToPasteboard")
@@ -216,6 +281,38 @@ private struct GeneralSettingsView: View {
                         object: nil,
                         userInfo: ["enabled": newValue]
                     )
+                }
+            }
+            
+            Section("卡片字体设置") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker("字体", selection: $cardFontName) {
+                        ForEach(availableFonts, id: \.self) { fontName in
+                            Text(fontName).tag(fontName)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .onAppear {
+                        loadAvailableFonts()
+                    }
+                    .onChange(of: cardFontName) { _, _ in
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("CardFontChanged"),
+                            object: nil
+                        )
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("字体大小: \(Int(cardFontSize))")
+                            .font(.subheadline)
+                        Slider(value: $cardFontSize, in: 8...20, step: 1)
+                            .onChange(of: cardFontSize) { _, _ in
+                                NotificationCenter.default.post(
+                                    name: NSNotification.Name("CardFontChanged"),
+                                    object: nil
+                                )
+                            }
+                    }
                 }
             }
             
@@ -326,7 +423,29 @@ private struct GeneralSettingsView: View {
             launchAtLogin = LaunchAtLoginManager.shared.isEnabled
             // 检查辅助功能权限状态
             checkAccessibilityPermission()
+            // 加载可用字体
+            loadAvailableFonts()
         }
+    }
+    
+    private func loadAvailableFonts() {
+        let systemFonts = [
+            "SF Pro Text",
+            "SF Pro Display",
+            "SF Mono",
+            "Helvetica Neue",
+            "Arial",
+            "Times New Roman",
+            "Courier New",
+            "Menlo",
+            "Monaco"
+        ]
+        
+        // 获取系统所有可用字体
+        let allFonts = NSFontManager.shared.availableFontFamilies
+        let commonFonts = systemFonts.filter { allFonts.contains($0) }
+        
+        availableFonts = commonFonts + allFonts.filter { !systemFonts.contains($0) }.sorted()
     }
     
     private func positionDisplayName(_ position: DockPosition) -> String {

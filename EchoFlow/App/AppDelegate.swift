@@ -40,22 +40,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         
+        // 从 UserDefaults 加载显示模式设置
+        if let savedMode = UserDefaults.standard.string(forKey: "displayMode"),
+           let mode = DisplayMode(rawValue: savedMode) {
+            windowManager.displayMode = mode
+            print("📋 已加载保存的显示模式: \(mode.displayName)")
+        }
+        
         // 从 UserDefaults 加载停靠位置设置
         if let savedPosition = UserDefaults.standard.string(forKey: "dockPosition"),
            let position = DockPosition(rawValue: savedPosition) {
             windowManager.dockPosition = position
             print("📋 已加载保存的停靠位置: \(position.rawValue)")
         }
+        
+        // 从 UserDefaults 加载置顶设置
+        let alwaysOnTop = UserDefaults.standard.bool(forKey: "alwaysOnTop")
+        windowManager.isAlwaysOnTop = alwaysOnTop
 
         // 获取共享的 ModelContainer
         let container = EchoFlowApp.sharedModelContainer
 
-        // 创建主面板
+        // 根据显示模式创建窗口或面板
         let windowManager = WindowManager.shared
-        let rootView = RootView()
-            .modelContainer(container)
-
-        windowManager.createPanel(with: rootView)
+        if windowManager.displayMode == .window {
+            // 窗口模式：创建普通窗口并显示长条状列表
+            let windowView = ClipboardWindowView()
+                .modelContainer(container)
+            windowManager.createMainWindow(with: windowView)
+        } else {
+            // 面板模式：创建悬浮面板
+            let rootView = RootView()
+                .modelContainer(container)
+            windowManager.createPanel(with: rootView)
+        }
 
         // 设置菜单栏图标（根据设置决定是否显示）
         // 延迟创建以确保系统准备就绪
@@ -87,6 +105,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSStatusBar.system.removeStatusItem(statusItem)
                     self.statusItem = nil
                 }
+            }
+        }
+        
+        // 监听显示模式切换
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("DisplayModeChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            
+            let container = EchoFlowApp.sharedModelContainer
+            if windowManager.displayMode == .window {
+                // 切换到窗口模式
+                let windowView = ClipboardWindowView()
+                    .modelContainer(container)
+                windowManager.createMainWindow(with: windowView)
+            } else {
+                // 切换到面板模式
+                let rootView = RootView()
+                    .modelContainer(container)
+                windowManager.createPanel(with: rootView)
             }
         }
 
@@ -149,9 +189,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 处理应用重新打开（双击 Dock 图标或 app）
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // 如果是菜单栏应用，不应该打开新窗口
-        // 只激活现有面板（如果存在）
-        if let panel = windowManager.panel, panel.isVisible {
-            windowManager.togglePanel()
+        // 根据显示模式切换窗口
+        if windowManager.displayMode == .window {
+            windowManager.toggleMainWindow()
+        } else {
+            if let panel = windowManager.panel, panel.isVisible {
+                windowManager.togglePanel()
+            }
         }
         return false // 返回 false 表示不处理重新打开，防止创建新窗口
     }
@@ -266,7 +310,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Actions
 
     @objc private func togglePanel() {
-        windowManager.togglePanel()
+        // 根据显示模式切换对应的窗口
+        if windowManager.displayMode == .window {
+            windowManager.toggleMainWindow()
+        } else {
+            windowManager.togglePanel()
+        }
     }
 
     @objc private func openSettings() {

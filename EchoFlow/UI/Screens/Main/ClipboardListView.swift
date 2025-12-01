@@ -341,7 +341,7 @@ struct ClipboardHorizontalCollectionView: NSViewRepresentable {
         
         // 配置 ScrollView（水平滚动）
         scrollView.hasVerticalScroller = false
-        scrollView.hasHorizontalScroller = false // 隐藏水平滚动条
+        scrollView.hasHorizontalScroller = false // 完全隐藏水平滚动条
         scrollView.autohidesScrollers = false
         scrollView.borderType = .noBorder
         scrollView.backgroundColor = .clear
@@ -385,6 +385,13 @@ struct ClipboardHorizontalCollectionView: NSViewRepresentable {
         clipView.documentView = collectionView
         scrollView.contentView = clipView
         scrollView.documentView = collectionView
+        
+        // 确保 NSCollectionView 的滚动条也被禁用
+        if let enclosingScrollView = collectionView.enclosingScrollView {
+            enclosingScrollView.hasHorizontalScroller = false
+            enclosingScrollView.hasVerticalScroller = false
+            enclosingScrollView.autohidesScrollers = false
+        }
         
         // 监听链接元数据更新通知
         NotificationCenter.default.addObserver(
@@ -445,6 +452,16 @@ struct ClipboardHorizontalCollectionView: NSViewRepresentable {
         }
         let coordinator = context.coordinator
         let previousFocusedIndex = coordinator.focusedIndex
+        
+        // 确保滚动条被禁用（每次更新时都检查）
+        nsView.hasHorizontalScroller = false
+        nsView.hasVerticalScroller = false
+        nsView.autohidesScrollers = false
+        if let enclosingScrollView = collectionView.enclosingScrollView {
+            enclosingScrollView.hasHorizontalScroller = false
+            enclosingScrollView.hasVerticalScroller = false
+            enclosingScrollView.autohidesScrollers = false
+        }
         
         // 确保 item 已注册（在更新时再次检查）
         let identifier = NSUserInterfaceItemIdentifier("ClipboardCardItem")
@@ -796,7 +813,7 @@ struct ClipboardTableView: NSViewRepresentable {
         let tableView = NSTableView()
         
         // 配置 ScrollView（垂直布局：垂直滚动）
-        scrollView.hasVerticalScroller = false // 隐藏垂直滚动条
+        scrollView.hasVerticalScroller = false // 完全隐藏垂直滚动条
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = false
         scrollView.borderType = .noBorder
@@ -1269,6 +1286,9 @@ class ClipboardCardView: NSView {
         UserDefaults.standard.bool(forKey: "enableCoolMode")
     }
     
+    // 监听字体变化
+    private var fontObserver: NSObjectProtocol?
+    
     init(
         item: ClipboardItem,
         index: Int,
@@ -1298,14 +1318,44 @@ class ClipboardCardView: NSView {
             name: NSNotification.Name("CoolModeChanged"),
             object: nil
         )
+        
+        // 监听字体变化通知
+        fontObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("CardFontChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateFonts()
+        }
     }
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+
+    // MARK: - Snapshot for Drag Preview
+
+    /// 使用系统提供的缓存绘制 API，将当前卡片视图渲染为一张 NSImage
+    /// 这样拖拽预览与实际视觉完全一致，并且实现简单、性能较好
+    private func snapshotImage() -> NSImage? {
+        let targetBounds = self.bounds
+        guard targetBounds.width > 0, targetBounds.height > 0 else { return nil }
+
+        guard let rep = bitmapImageRepForCachingDisplay(in: targetBounds) else {
+            return nil
+        }
+        cacheDisplay(in: targetBounds, to: rep)
+
+        let image = NSImage(size: targetBounds.size)
+        image.addRepresentation(rep)
+        return image
+    }
     
     deinit {
         NotificationCenter.default.removeObserver(self)
+        if let observer = fontObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
     
     // MARK: - 炫酷模式切换处理
@@ -1372,6 +1422,9 @@ class ClipboardCardView: NSView {
             timeLabel.stringValue = item.relativeTimeString
         }
         
+        // 更新字体（如果字体设置变化）
+        updateFonts()
+        
         // 更新快捷键徽章
         if index < 9 {
             if shortcutBadge == nil {
@@ -1432,6 +1485,16 @@ class ClipboardCardView: NSView {
         
         // 设置右键菜单
         self.menu = createContextMenu()
+        
+        // 注册拖拽类型
+        registerForDraggedTypes([
+            .string,
+            .fileURL,
+            .png,
+            .tiff,
+            .rtf,
+            .rtfd
+        ])
         
         // 创建内容容器（用于裁剪圆角）
         setupContainerView()
@@ -1510,12 +1573,48 @@ class ClipboardCardView: NSView {
         updateShinePosition()
     }
     
+    private var dragStartLocation: NSPoint?
+    
     override func mouseDown(with event: NSEvent) {
+        // 记录拖拽起始位置
+        dragStartLocation = convert(event.locationInWindow, from: nil)
         if event.clickCount == 2 {
             handleDoubleClick()
         } else {
             handleClick()
         }
+    }
+    
+    override func mouseDragged(with event: NSEvent) {
+        guard let dragStartLocation = dragStartLocation else { return }
+        
+        // 检查是否移动了足够的距离才开始拖拽（避免误触）
+        let currentLocation = convert(event.locationInWindow, from: nil)
+        let deltaX = abs(currentLocation.x - dragStartLocation.x)
+        let deltaY = abs(currentLocation.y - dragStartLocation.y)
+        
+        if deltaX < 3 && deltaY < 3 {
+            return // 移动距离太小，不开始拖拽
+        }
+        
+        // 创建拖拽项
+        let pasteboardItem = createDragItemProvider()
+        let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
+        
+        // 设置拖拽预览图像
+        let previewImage = createDragPreviewImage()
+        draggingItem.setDraggingFrame(bounds, contents: previewImage)
+        
+        // 开始拖拽会话
+        beginDraggingSession(with: [draggingItem], event: event, source: self)
+        
+        // 重置拖拽起始位置
+        self.dragStartLocation = nil
+    }
+    
+    override func mouseUp(with event: NSEvent) {
+        // 清除拖拽起始位置
+        dragStartLocation = nil
     }
     
     // MARK: - 3D 变换效果
@@ -1704,6 +1803,9 @@ class ClipboardCardView: NSView {
         ])
         contentView = content
         
+        // 确保字体设置已应用（在创建后立即应用）
+        updateFonts()
+        
         // 创建快捷键徽章（添加到主视图，在容器之上）
         if index < 9 {
             let badge = createShortcutBadge()
@@ -1790,6 +1892,7 @@ class ClipboardCardView: NSView {
     private func createContentView() -> NSView {
         let container = NSView()
         container.wantsLayer = true
+        // 使用固定的浅色背景，避免在深色模式下出现深色文字反而变白的问题
         container.layer?.backgroundColor = NSColor.white.cgColor
         
         switch item.type {
@@ -1819,9 +1922,12 @@ class ClipboardCardView: NSView {
             let linkView = createLinkView()
             container.addSubview(linkView)
             linkView.translatesAutoresizingMaskIntoConstraints = false
+            // 让 linkView 填充整个 container，这样内部的边距约束才能生效
             NSLayoutConstraint.activate([
-                linkView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-                linkView.centerYAnchor.constraint(equalTo: container.centerYAnchor)
+                linkView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                linkView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                linkView.topAnchor.constraint(equalTo: container.topAnchor),
+                linkView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
             ])
             
         case .file:
@@ -1855,6 +1961,26 @@ class ClipboardCardView: NSView {
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.heightTracksTextView = false
         
+        // 使用用户设置的字体和大小（先设置字体，再加载内容，确保字体生效）
+        let cardFontName = UserDefaults.standard.string(forKey: "cardFontName") ?? "SF Pro Text"
+        let cardFontSize = CGFloat(UserDefaults.standard.double(forKey: "cardFontSize"))
+        let fontSize = cardFontSize > 0 ? cardFontSize : 12.0
+        
+        let targetFont: NSFont
+        if item.type == .code {
+            targetFont = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        } else {
+            if let font = NSFont(name: cardFontName, size: fontSize) {
+                targetFont = font
+            } else {
+                targetFont = .systemFont(ofSize: fontSize)
+            }
+        }
+        textView.font = targetFont
+        // 注意：这里不能用 .labelColor（深色模式下会变成白色），
+        // 卡片内容区域背景是浅色，应始终使用深色文字以确保可读性
+        textView.textColor = .black
+        
         // 加载富文本
         if let rtfData = item.richTextData {
             Task {
@@ -1862,7 +1988,14 @@ class ClipboardCardView: NSView {
                 let isHTML = ClipboardCardView.detectHTMLFormat(in: rtfData)
                 let result = await RichTextCache.shared.load(data: rtfData, key: rtfData.sha256Hash, isHTML: isHTML)
                 await MainActor.run {
-                    textView.textStorage?.setAttributedString(NSAttributedString(result.attributedString))
+                    // 将 AttributedString 转换为 NSAttributedString
+                    let nsAttrString = NSMutableAttributedString(result.attributedString)
+                    
+                    // 覆盖缓存中的字体属性，应用用户设置的字体
+                    let fullRange = NSRange(location: 0, length: nsAttrString.length)
+                    nsAttrString.addAttribute(.font, value: targetFont, range: fullRange)
+                    
+                    textView.textStorage?.setAttributedString(nsAttrString)
                     if let bgColor = result.backgroundColor {
                         // 从 SwiftUI Color 转换为 NSColor
                         let nsColor = NSColor(bgColor)
@@ -1874,14 +2007,85 @@ class ClipboardCardView: NSView {
             textView.string = item.contentPreview
         }
         
-        if item.type == .code {
-            textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        } else {
-            textView.font = .systemFont(ofSize: 12)
-        }
-        textView.textColor = .labelColor
-        
         return textView
+    }
+    
+    // MARK: - 字体更新方法
+    
+    private func updateFonts() {
+        let cardFontName = UserDefaults.standard.string(forKey: "cardFontName") ?? "SF Pro Text"
+        let cardFontSize = CGFloat(UserDefaults.standard.double(forKey: "cardFontSize"))
+        let fontSize = cardFontSize > 0 ? cardFontSize : 12.0
+        
+        // 更新文本视图字体（查找所有 NSTextView，不仅仅是第一个）
+        if let contentView = contentView {
+            for subview in contentView.subviews {
+                if let textView = subview as? NSTextView {
+                    let targetFont: NSFont
+                    if item.type == .code {
+                        targetFont = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+                    } else {
+                        if let font = NSFont(name: cardFontName, size: fontSize) {
+                            targetFont = font
+                        } else {
+                            targetFont = .systemFont(ofSize: fontSize)
+                        }
+                    }
+                    textView.font = targetFont
+                    
+                    // 如果 textView 有 attributedString，需要更新其中的字体属性
+                    if let textStorage = textView.textStorage, textStorage.length > 0 {
+                        let mutableAttrString = NSMutableAttributedString(attributedString: textStorage)
+                        let fullRange = NSRange(location: 0, length: mutableAttrString.length)
+                        mutableAttrString.addAttribute(.font, value: targetFont, range: fullRange)
+                        textView.textStorage?.setAttributedString(mutableAttrString)
+                    }
+                }
+            }
+        }
+        
+        // 更新其他标签字体（图片名称、链接标题等）
+        updateLabelFonts(fontName: cardFontName, fontSize: fontSize)
+    }
+    
+    private func updateLabelFonts(fontName: String, fontSize: CGFloat) {
+        guard let contentView = contentView else { return }
+        
+        // 更新所有 NSTextField 标签的字体
+        for subview in contentView.subviews {
+            if let textField = subview as? NSTextField, !textField.isEditable {
+                // 根据内容类型应用不同的字体大小
+                let adjustedSize: CGFloat
+                let textValue = textField.stringValue
+                
+                if textValue.contains("http") || textValue.count > 30 {
+                    // URL 或长文本使用较小字体
+                    adjustedSize = fontSize * 0.75
+                } else if item.type == .image || item.type == .file {
+                    // 图片/文件名称使用稍小字体
+                    adjustedSize = fontSize * 0.92
+                } else if item.type == .link && textValue.count < 30 {
+                    // 链接标题使用较小字体并加粗
+                    adjustedSize = fontSize * 0.75
+                    if let baseFont = NSFont(name: fontName, size: adjustedSize) {
+                        let fontManager = NSFontManager.shared
+                        textField.font = fontManager.convert(baseFont, toHaveTrait: .boldFontMask) ?? .systemFont(ofSize: adjustedSize, weight: .medium)
+                    } else {
+                        textField.font = .systemFont(ofSize: adjustedSize, weight: .medium)
+                    }
+                    continue
+                } else {
+                    // 其他使用正常大小
+                    adjustedSize = fontSize
+                }
+                
+                if let font = NSFont(name: fontName, size: adjustedSize) {
+                    textField.font = font
+                } else {
+                    textField.font = .systemFont(ofSize: adjustedSize)
+                }
+            }
+        }
     }
     
     // 辅助方法：检测 HTML 格式
@@ -1938,8 +2142,16 @@ class ClipboardCardView: NSView {
         if !imageName.isEmpty {
             let truncatedImageName = truncateString(imageName, maxLength: 30)
             let label = NSTextField(labelWithString: truncatedImageName)
-            label.font = .systemFont(ofSize: 11)
-            label.textColor = .labelColor
+            let cardFontName = UserDefaults.standard.string(forKey: "cardFontName") ?? "SF Pro Text"
+            let cardFontSize = CGFloat(UserDefaults.standard.double(forKey: "cardFontSize"))
+            let fontSize = cardFontSize > 0 ? cardFontSize * 0.92 : 11.0
+            if let font = NSFont(name: cardFontName, size: fontSize) {
+                label.font = font
+            } else {
+                label.font = .systemFont(ofSize: fontSize)
+            }
+            // 固定使用深灰色，保证在浅色内容背景下（包括深色模式）都有足够对比度
+            label.textColor = .darkGray
             label.alignment = .center
             label.maximumNumberOfLines = 2
             label.lineBreakMode = .byTruncatingMiddle
@@ -1957,7 +2169,8 @@ class ClipboardCardView: NSView {
             let sizeText = formatter.string(fromByteCount: fileSize)
             let label = NSTextField(labelWithString: sizeText)
             label.font = .systemFont(ofSize: 10)
-            label.textColor = .secondaryLabelColor
+            // 文件大小使用稍浅的深灰色，而不是系统动态颜色
+            label.textColor = NSColor.darkGray.withAlphaComponent(0.8)
             label.alignment = .center
             container.addSubview(label)
             label.translatesAutoresizingMaskIntoConstraints = false
@@ -2032,8 +2245,18 @@ class ClipboardCardView: NSView {
         if let title = item.linkTitle, !title.isEmpty {
             let truncatedTitle = truncateString(title, maxLength: 30)
             let label = NSTextField(labelWithString: truncatedTitle)
-            label.font = .systemFont(ofSize: 11)
-            label.textColor = .labelColor
+            let cardFontName = UserDefaults.standard.string(forKey: "cardFontName") ?? "SF Pro Text"
+            let cardFontSize = CGFloat(UserDefaults.standard.double(forKey: "cardFontSize"))
+            let fontSize = cardFontSize > 0 ? cardFontSize * 0.75 : 11.0
+            if let baseFont = NSFont(name: cardFontName, size: fontSize) {
+                // 使用 NSFontManager 创建粗体字体
+                let fontManager = NSFontManager.shared
+                label.font = fontManager.convert(baseFont, toHaveTrait: .boldFontMask) ?? .systemFont(ofSize: fontSize, weight: .medium)
+            } else {
+                label.font = .systemFont(ofSize: fontSize, weight: .medium)
+            }
+            // 链接标题始终使用深色，避免在浅色背景上变成白字
+            label.textColor = .black
             label.alignment = .center
             label.maximumNumberOfLines = 2
             label.lineBreakMode = .byTruncatingMiddle
@@ -2045,8 +2268,16 @@ class ClipboardCardView: NSView {
         // URL（总是显示，作为文件大小位置）- 添加截断处理
         let truncatedURL = truncateString(item.content, maxLength: 40)
         let urlLabel = NSTextField(labelWithString: truncatedURL)
-        urlLabel.font = .systemFont(ofSize: 10)
-        urlLabel.textColor = .secondaryLabelColor
+        let cardFontName = UserDefaults.standard.string(forKey: "cardFontName") ?? "SF Pro Text"
+        let cardFontSize = CGFloat(UserDefaults.standard.double(forKey: "cardFontSize"))
+        let fontSize = cardFontSize > 0 ? cardFontSize * 0.75 : 10.0
+        if let font = NSFont(name: cardFontName, size: fontSize) {
+            urlLabel.font = font
+        } else {
+            urlLabel.font = .systemFont(ofSize: fontSize)
+        }
+        // URL 使用深灰色，提升在浅色背景下的可读性
+        urlLabel.textColor = .darkGray
         urlLabel.alignment = .center
         urlLabel.maximumNumberOfLines = 3
         urlLabel.lineBreakMode = .byTruncatingMiddle
@@ -2054,6 +2285,8 @@ class ClipboardCardView: NSView {
         urlLabel.translatesAutoresizingMaskIntoConstraints = false
         
         // 布局约束 - 参考图片类型的垂直居中布局
+        // 卡片宽度为 240，考虑 AppKit 原生设计，设置更大的边距（20 点）防止文本太满
+        let horizontalPadding: CGFloat = 20
         if let titleLabel = titleLabel {
             // 有标题的情况：图标 -> 标题 -> URL
             NSLayoutConstraint.activate([
@@ -2064,13 +2297,13 @@ class ClipboardCardView: NSView {
                 
                 titleLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
                 titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 8),
-                titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 8),
-                titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -8),
+                titleLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: horizontalPadding),
+                titleLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -horizontalPadding),
                 
                 urlLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
                 urlLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
-                urlLabel.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 8),
-                urlLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -8)
+                urlLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: horizontalPadding),
+                urlLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -horizontalPadding)
             ])
         } else {
             // 没有标题的情况：图标 -> URL
@@ -2082,8 +2315,8 @@ class ClipboardCardView: NSView {
                 
                 urlLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
                 urlLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 8),
-                urlLabel.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 8),
-                urlLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -8)
+                urlLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: horizontalPadding),
+                urlLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -horizontalPadding)
             ])
         }
         
@@ -2116,7 +2349,8 @@ class ClipboardCardView: NSView {
             let truncatedFileName = truncateString(fileName, maxLength: 30)
             let label = NSTextField(labelWithString: truncatedFileName)
             label.font = .systemFont(ofSize: 11)
-            label.textColor = .labelColor
+            // 文件名使用固定深色，避免深色模式下变成白色导致不可见
+            label.textColor = .black
             label.alignment = .center
             label.maximumNumberOfLines = 2
             label.lineBreakMode = .byTruncatingMiddle
@@ -2134,7 +2368,8 @@ class ClipboardCardView: NSView {
             let sizeText = formatter.string(fromByteCount: fileSize)
             let label = NSTextField(labelWithString: sizeText)
             label.font = .systemFont(ofSize: 10)
-            label.textColor = .secondaryLabelColor
+            // 文件大小文字使用深灰色
+            label.textColor = .darkGray
             label.alignment = .center
             container.addSubview(label)
             label.translatesAutoresizingMaskIntoConstraints = false
@@ -2204,7 +2439,8 @@ class ClipboardCardView: NSView {
         // 颜色代码（与文件名样式一致）
         let codeLabel = NSTextField(labelWithString: item.content)
         codeLabel.font = .systemFont(ofSize: 11)
-        codeLabel.textColor = .labelColor
+        // 颜色代码使用固定深色，避免浅色背景下变成白字
+        codeLabel.textColor = .black
         codeLabel.alignment = .center
         codeLabel.maximumNumberOfLines = 1
         codeLabel.lineBreakMode = .byTruncatingMiddle
@@ -2463,6 +2699,88 @@ class ClipboardCardView: NSView {
         guard string.count > maxLength else { return string }
         let truncated = String(string.prefix(maxLength))
         return truncated + "..."
+    }
+    
+    // MARK: - 拖拽支持
+    
+    private func createDragItemProvider() -> NSPasteboardItem {
+        let pasteboardItem = NSPasteboardItem()
+        
+        switch item.type {
+        case .text, .code:
+            // 文本类型：注册为纯文本和富文本
+            pasteboardItem.setString(item.content, forType: .string)
+            if let rtfData = item.richTextData {
+                pasteboardItem.setData(rtfData, forType: .rtf)
+            }
+            
+        case .file:
+            // 文件类型：直接使用文件 URL，让 Finder 直接访问原文件
+            let fileURL = URL(fileURLWithPath: item.content)
+            if FileManager.default.fileExists(atPath: item.content) {
+                // 使用文件 URL 字符串（Finder 可以直接处理，不需要复制）
+                // 注意：使用 file:// 协议格式
+                let fileURLString = fileURL.absoluteString
+                pasteboardItem.setString(fileURLString, forType: .fileURL)
+                
+                // 也提供文件路径作为纯文本（某些应用可能需要）
+                pasteboardItem.setString(item.content, forType: .string)
+                
+                // 添加文件路径数据（使用 UTF-8 编码的文件路径）
+                // 这样 Finder 可以直接访问文件，不需要复制和权限提示
+                if let filePathData = fileURLString.data(using: .utf8) {
+                    pasteboardItem.setData(filePathData, forType: .fileURL)
+                }
+            }
+            
+        case .image:
+            // 图片类型：注册为图片数据
+            if let imageData = item.imageData {
+                pasteboardItem.setData(imageData, forType: .png)
+                pasteboardItem.setData(imageData, forType: .tiff)
+                
+                // 如果是文件路径，也注册为文件 URL
+                if FileManager.default.fileExists(atPath: item.content) {
+                    let fileURL = URL(fileURLWithPath: item.content)
+                    pasteboardItem.setString(fileURL.absoluteString, forType: .fileURL)
+                }
+            }
+            
+        case .link:
+            // 链接类型：注册为 URL 和纯文本
+            pasteboardItem.setString(item.content, forType: .string)
+            if let url = URL(string: item.content) {
+                pasteboardItem.setString(url.absoluteString, forType: .string)
+            }
+            
+        case .color:
+            // 颜色类型：注册为纯文本（颜色值）
+            pasteboardItem.setString(item.content, forType: .string)
+        }
+        
+        return pasteboardItem
+    }
+    
+    private func createDragPreviewImage() -> NSImage? {
+        return snapshotImage()   // 直接对 ClipboardCardView 做 bitmap 快照
+    }
+}
+
+// MARK: - NSDraggingSource
+
+extension ClipboardCardView: NSDraggingSource {
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        return .copy
+    }
+    
+    func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
+        // 拖拽开始时，可以添加视觉反馈
+        layer?.opacity = 0.7
+    }
+    
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        // 拖拽结束时，恢复视觉状态
+        layer?.opacity = 1.0
     }
 }
 

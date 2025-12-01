@@ -72,7 +72,7 @@ struct NoteCard: View, Equatable {
         }
         .padding(18)
         .frame(width: 240, height: 240)
-        .background(Color.white.opacity(0.96))
+        .background(Color.white) // 纯白背景
         .clipShape(RoundedRectangle(cornerRadius: 12))
         // 样式修饰符提取
         .modifier(CardStyleModifier(
@@ -83,13 +83,24 @@ struct NoteCard: View, Equatable {
         .id("card-\(note.id)-\(isFocused)")
     }
 
+    @AppStorage("cardFontName") private var cardFontName: String = "SF Pro Text"
+    @AppStorage("cardFontSize") private var cardFontSize: Double = 12.0
+    
+    private var cardHeaderFont: Font {
+        let fontSize = CGFloat(cardFontSize > 0 ? cardFontSize * 1.08 : 13.0) // 标题使用稍大字体
+        if let font = NSFont(name: cardFontName, size: fontSize) {
+            return Font(font).weight(.semibold)
+        }
+        return .system(size: fontSize, weight: .semibold)
+    }
+    
     @ViewBuilder
     private var headerView: some View {
         if isEditingTitle {
             TextField("标题", text: $editingTitle, onCommit: saveTitle)
-                .font(.system(size: 13, weight: .semibold))
+                .font(cardHeaderFont)
                 .textFieldStyle(.plain)
-                .foregroundColor(.primary)
+                .foregroundColor(Color(NSColor.black)) // 固定深色，在白色背景上始终可见
                 .onChange(of: isFocused) { _, newValue in
                     // 失去焦点时自动保存
                     if !newValue && isEditingTitle {
@@ -98,13 +109,21 @@ struct NoteCard: View, Equatable {
                 }
         } else {
             Text(note.title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.primary)
+                .font(cardHeaderFont)
+                .foregroundColor(Color(NSColor.black)) // 固定深色，在白色背景上始终可见
                 .lineLimit(2)
                 .allowsHitTesting(false) // 允许点击穿透给 Button
         }
     }
 
+    private var cardBodyFont: Font {
+        let fontSize = CGFloat(cardFontSize > 0 ? cardFontSize * 0.92 : 11.0) // 内容使用稍小字体
+        if let font = NSFont(name: cardFontName, size: fontSize) {
+            return Font(font)
+        }
+        return .system(size: fontSize, design: .default)
+    }
+    
     @ViewBuilder
     private var bodyTextView: some View {
         if isEditingContent {
@@ -119,8 +138,8 @@ struct NoteCard: View, Equatable {
                     }
                 }
             )
-            .font(.system(size: 11))
-            .foregroundColor(.secondary)
+            .font(cardBodyFont)
+            .foregroundColor(Color(NSColor.darkGray)) // 固定深灰色，在白色背景上始终可见
             .frame(maxHeight: .infinity)
             .onChange(of: isFocused) { _, newValue in
                 // 卡片失去焦点时自动保存
@@ -130,8 +149,8 @@ struct NoteCard: View, Equatable {
             }
         } else {
             Text(note.contentPreview)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+                .font(cardBodyFont)
+                .foregroundColor(Color(NSColor.darkGray)) // 固定深灰色，在白色背景上始终可见
                 .lineLimit(8)
                 .frame(maxHeight: .infinity, alignment: .topLeading)
                 .allowsHitTesting(false)
@@ -153,7 +172,7 @@ struct NoteCard: View, Equatable {
             Spacer()
             Text(note.relativeTimeString)
                 .font(.system(size: 9))
-                .foregroundColor(.secondary)
+                .foregroundColor(Color(NSColor.gray)) // 固定灰色，在白色背景上始终可见
         }
     }
 
@@ -338,7 +357,21 @@ struct NoteTextEditor: NSViewRepresentable {
         
         textView.delegate = context.coordinator
         textView.isRichText = false
-        textView.font = .systemFont(ofSize: 11)
+        
+        // 使用用户设置的字体和大小
+        let cardFontName = UserDefaults.standard.string(forKey: "cardFontName") ?? "SF Pro Text"
+        let cardFontSize = CGFloat(UserDefaults.standard.double(forKey: "cardFontSize"))
+        let fontSize = cardFontSize > 0 ? cardFontSize * 0.92 : 11.0
+        if let font = NSFont(name: cardFontName, size: fontSize) {
+            textView.font = font
+        } else {
+            textView.font = .systemFont(ofSize: fontSize)
+        }
+        
+        // 使用固定深灰色文字，确保在白色背景上始终可见（深色模式兼容）
+        textView.textColor = NSColor.darkGray
+        textView.insertionPointColor = NSColor.darkGray
+        
         textView.drawsBackground = false
         textView.textContainerInset = NSSize(width: -4, height: 0)
         
@@ -357,6 +390,20 @@ struct NoteTextEditor: NSViewRepresentable {
         if textView.string != text {
             textView.string = text
         }
+        
+        // 更新字体（如果设置变化）
+        let cardFontName = UserDefaults.standard.string(forKey: "cardFontName") ?? "SF Pro Text"
+        let cardFontSize = CGFloat(UserDefaults.standard.double(forKey: "cardFontSize"))
+        let fontSize = cardFontSize > 0 ? cardFontSize * 0.92 : 11.0
+        if let font = NSFont(name: cardFontName, size: fontSize) {
+            textView.font = font
+        } else {
+            textView.font = .systemFont(ofSize: fontSize)
+        }
+        
+        // 保持固定深灰色文字（深色模式兼容）
+        textView.textColor = NSColor.darkGray
+        
         // 更新 coordinator 的 onFocusLost 回调
         context.coordinator.onFocusLost = onFocusLost
     }
